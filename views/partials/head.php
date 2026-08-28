@@ -1,4 +1,6 @@
-<?php 
+<?php
+require_once __DIR__ . '/../../includes/workflow.php';
+
 // Standardize the body class if not provided by page
 if(!isset($body_class)) {
     $body_class = "bg-gray-50 dark:bg-gray-900 flex flex-col min-h-screen text-gray-800 dark:text-gray-100 transition-colors duration-300";
@@ -14,7 +16,30 @@ if(!isset($body_class)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="<?= htmlspecialchars(ec_csrf_token(), ENT_QUOTES, 'UTF-8') ?>">
     <title><?= isset($page_title) ? htmlspecialchars($page_title) : 'SRM Sustainable Event Connect' ?></title>
+
+    <!-- Attaches the CSRF token to same-origin state-changing requests. -->
+    <script>
+        window.EC_CSRF = document.querySelector('meta[name="csrf-token"]').content;
+        (function () {
+            var nativeFetch = window.fetch;
+            window.fetch = function (input, init) {
+                init = init || {};
+                var method = (init.method || 'GET').toUpperCase();
+                var url = typeof input === 'string' ? input : (input && input.url) || '';
+                var sameOrigin = !/^https?:\/\//i.test(url) || url.indexOf(window.location.origin) === 0;
+                if (sameOrigin && method !== 'GET' && method !== 'HEAD') {
+                    var headers = new Headers(init.headers || {});
+                    if (!headers.has('X-CSRF-Token')) {
+                        headers.set('X-CSRF-Token', window.EC_CSRF);
+                    }
+                    init.headers = headers;
+                }
+                return nativeFetch.call(this, input, init);
+            };
+        })();
+    </script>
     
     <!-- Tailwind config for explicit Dark Mode -->
     <script src="https://cdn.tailwindcss.com"></script>

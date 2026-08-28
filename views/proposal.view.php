@@ -23,8 +23,9 @@ $prop_id_str = $is_editing ? sprintf('%04d', $_GET['id']) : '';
         </p>
     </div>
 
-    <form id="proposalForm" action="proposal.php<?= $is_editing ? '?id='.$_GET['id'] : '' ?>" method="POST" class="space-y-8">
-        
+    <form id="proposalForm" action="proposal.php<?= $is_editing ? '?id=' . (int)$_GET['id'] : '' ?>" method="POST" class="space-y-8">
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(ec_csrf_token(), ENT_QUOTES, 'UTF-8') ?>">
+
         <!-- 1. Convener Information (PREFILLED) -->
         <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-blue-100 dark:border-gray-700 p-6 sm:p-8 relative overflow-hidden transition-colors">
             <div class="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>

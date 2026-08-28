@@ -17,6 +17,7 @@ require 'partials/nav.php';
                 Export Department Data (CSV)
             </a>
             <form action="api_upload_preloaded.php" method="POST" enctype="multipart/form-data" class="flex flex-col sm:flex-row gap-2 sm:items-center">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(ec_csrf_token(), ENT_QUOTES, 'UTF-8') ?>">
                 <input type="file" name="csv_file" accept=".csv" required class="text-sm text-gray-600 dark:text-gray-300" />
                 <button type="submit" class="inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold shadow-sm transition-colors duration-200">
                     Upload Pre-Approved CSV

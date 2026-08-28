@@ -1,10 +1,16 @@
 <?php
-session_start();
+require_once 'includes/workflow.php';
 require_once 'includes/db.php';
 
 if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
     http_response_code(403);
     echo json_encode(["error" => "Unauthorized"]);
+    exit;
+}
+
+if($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(["error" => "Invalid request method"]);
     exit;
 }
 
@@ -15,10 +21,27 @@ if(!$data || !isset($data['proposal_id']) || !isset($data['message'])) {
     exit;
 }
 
+if(!ec_csrf_valid($data)) {
+    http_response_code(403);
+    echo json_encode(["error" => "Invalid or missing security token. Please reload the page."]);
+    exit;
+}
+
 $proposal_id = intval($data['proposal_id']);
 $message = trim($data['message']);
 $user_id = $_SESSION["id"];
 $role = strtoupper($_SESSION["role"] ?? '');
+
+if($message === '') {
+    http_response_code(400);
+    echo json_encode(["error" => "Message cannot be empty"]);
+    exit;
+}
+if(mb_strlen($message) > 5000) {
+    http_response_code(400);
+    echo json_encode(["error" => "Message is too long (5000 characters maximum)"]);
+    exit;
+}
 
 if ($role === 'COORDINATOR') {
     http_response_code(403);
@@ -71,12 +94,17 @@ if($prop['status'] !== 'Review') {
 }
 $stmt->close();
 
-$insert = "INSERT INTO proposal_messages (proposal_id, sender_id, message) VALUES (?, ?, ?)";
-$stmt2 = $conn->prepare($insert);
-$stmt2->bind_param("iis", $proposal_id, $user_id, $message);
-$stmt2->execute();
-$id = $stmt2->insert_id;
-$stmt2->close();
+try {
+    $insert = "INSERT INTO proposal_messages (proposal_id, sender_id, message) VALUES (?, ?, ?)";
+    $stmt2 = $conn->prepare($insert);
+    $stmt2->bind_param("iis", $proposal_id, $user_id, $message);
+    $stmt2->execute();
+    $id = $stmt2->insert_id;
+    $stmt2->close();
 
-echo json_encode(["success" => true, "id" => $id]);
-?>
+    echo json_encode(["success" => true, "id" => $id]);
+} catch (Throwable $e) {
+    $ref = ec_log_exception($e, 'proposal_message');
+    http_response_code(500);
+    echo json_encode(["error" => "Could not send the message. Reference: {$ref}"]);
+}

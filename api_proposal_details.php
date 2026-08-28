@@ -44,29 +44,22 @@ $result = $stmt->get_result();
 if($result->num_rows > 0) {
     $proposal = $result->fetch_assoc();
     
-    // Fetch guests
-    $guests = [];
-    $g_q = $conn->query("SELECT * FROM proposal_guests WHERE proposal_id = $id");
-    while($r = $g_q->fetch_assoc()) $guests[] = $r;
-    $proposal['guests'] = $guests;
-    
-    // Fetch travel
-    $travel = [];
-    $t_q = $conn->query("SELECT * FROM proposal_travel_accomm WHERE proposal_id = $id");
-    while($r = $t_q->fetch_assoc()) $travel[] = $r;
-    $proposal['travel'] = $travel;
-    
-    // Fetch budgets
-    $budgets = [];
-    $b_q = $conn->query("SELECT * FROM proposal_budgets WHERE proposal_id = $id");
-    while($r = $b_q->fetch_assoc()) $budgets[] = $r;
-    $proposal['budgets'] = $budgets;
-    
-    // Fetch sponsors
-    $sponsors = [];
-    $s_q = $conn->query("SELECT * FROM proposal_sponsors WHERE proposal_id = $id");
-    while($r = $s_q->fetch_assoc()) $sponsors[] = $r;
-    $proposal['sponsors'] = $sponsors;
+    // Related rows, all via prepared statements.
+    $fetchRelated = function(string $table) use ($conn, $id): array {
+        $s = $conn->prepare("SELECT * FROM `{$table}` WHERE proposal_id = ?");
+        $s->bind_param("i", $id);
+        $s->execute();
+        $res = $s->get_result();
+        $rows = [];
+        while($r = $res->fetch_assoc()) $rows[] = $r;
+        $s->close();
+        return $rows;
+    };
+
+    $proposal['guests']   = $fetchRelated('proposal_guests');
+    $proposal['travel']   = $fetchRelated('proposal_travel_accomm');
+    $proposal['budgets']  = $fetchRelated('proposal_budgets');
+    $proposal['sponsors'] = $fetchRelated('proposal_sponsors');
 
     // Fetch messages
     $messages = [];

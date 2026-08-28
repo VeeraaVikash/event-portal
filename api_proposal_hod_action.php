@@ -1,9 +1,14 @@
 <?php
-session_start();
+require_once 'includes/workflow.php';
 require_once 'includes/db.php';
 
-if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true || strtoupper($_SESSION["role"]) !== 'HOD'){
-    echo json_encode(["status" => "error", "message" => "Unauthorized"]);
+if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true || strtoupper($_SESSION["role"] ?? '') !== 'HOD'){
+    ec_json(["status" => "error", "message" => "Unauthorized"], 401);
+    exit;
+}
+
+if($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    ec_json(["status" => "error", "message" => "Invalid request method"], 405);
     exit;
 }
 
@@ -12,7 +17,12 @@ $user_id = $_SESSION["id"];
 $data = json_decode(file_get_contents('php://input'), true);
 
 if(!$data || !isset($data['id']) || !isset($data['action'])) {
-    echo json_encode(["status" => "error", "message" => "Missing data"]);
+    ec_json(["status" => "error", "message" => "Missing data"], 400);
+    exit;
+}
+
+if(!ec_csrf_valid($data)) {
+    ec_json(["status" => "error", "message" => "Invalid or missing security token. Please reload the page."], 403);
     exit;
 }
 
@@ -37,53 +47,71 @@ $st->execute();
 $res = $st->get_result();
 
 if($res->num_rows === 0) {
-    echo json_encode(["status" => "error", "message" => "Proposal not found or unauthorized"]);
+    ec_json(["status" => "error", "message" => "Proposal not found or unauthorized"], 404);
     exit;
 }
 $row = $res->fetch_assoc();
 $current_status = $row['status'];
 $st->close();
 
-if (strcasecmp($current_status, 'Cancelled') === 0) {
-    echo json_encode(["status" => "error", "message" => "Proposal is cancelled and cannot be modified."]);
+// Optional stale-update guard for a dashboard that has gone out of date.
+if(isset($data['expected_status']) && $data['expected_status'] !== $current_status) {
+    ec_json([
+        "status" => "error",
+        "message" => "This proposal was updated by someone else (now {$current_status}). Please refresh.",
+        "currentStatus" => $current_status
+    ], 409);
     exit;
 }
 
-$new_status = '';
-$log_msg = '';
+[$allowed, $why] = ec_hod_transition_allowed($current_status, $action);
+if(!$allowed) {
+    ec_json(["status" => "error", "message" => $why], 409);
+    exit;
+}
+
+$new_status = EC_HOD_ACTION_STATUS[$action];
 
 if ($action === 'approve') {
-    $new_status = 'Approved';
     $log_msg = "APPROVED BY HOD.";
     if ($reason !== '') {
         $log_msg .= " Remarks: " . $reason;
     }
 } elseif ($action === 'reject') {
-    if (empty($reason)) {
-        echo json_encode(["status" => "error", "message" => "Reason is required for Rejection"]);
+    if ($reason === '') {
+        ec_json(["status" => "error", "message" => "Reason is required for Rejection"], 400);
         exit;
     }
-    $new_status = 'Rejected';
     $log_msg = "REJECTED BY HOD: " . $reason;
-} elseif ($action === 'review') {
-    if (empty($reason)) {
-        echo json_encode(["status" => "error", "message" => "Reason is required to send back for Review"]);
+} else { // review
+    if ($reason === '') {
+        ec_json(["status" => "error", "message" => "Reason is required to send back for Review"], 400);
         exit;
     }
-    $new_status = 'Review';
     $log_msg = "REVIEW REQUIRED (HOD): " . $reason;
-} else {
-    echo json_encode(["status" => "error", "message" => "Invalid action"]);
-    exit;
 }
 
 $conn->begin_transaction();
 try {
-    $uQ = "UPDATE proposals SET status = ? WHERE id = ?";
+    // Compare-and-swap: scoped to the department AND the status we just read,
+    // so two HODs acting at once cannot both record a decision.
+    $uQ = "UPDATE proposals p JOIN users u ON p.user_id = u.id
+              SET p.status = ?
+            WHERE p.id = ? AND u.department = ? AND p.status = ?";
     $stU = $conn->prepare($uQ);
-    $stU->bind_param("si", $new_status, $prop_id);
+    $stU->bind_param("siss", $new_status, $prop_id, $hod_dept, $current_status);
     $stU->execute();
+    $changed = $stU->affected_rows;
     $stU->close();
+
+    if($changed === 0) {
+        $conn->rollback();
+        ec_json([
+            "status" => "error",
+            "message" => "This proposal was updated by someone else. Please refresh and try again."
+        ], 409);
+        exit;
+    }
 
     $msgQ = "INSERT INTO proposal_messages (proposal_id, sender_id, message) VALUES (?, ?, ?)";
     $stMsg = $conn->prepare($msgQ);
@@ -92,9 +120,9 @@ try {
     $stMsg->close();
 
     $conn->commit();
-    echo json_encode(["status" => "success", "newStatus" => $new_status]);
-} catch (Exception $e) {
+    ec_json(["status" => "success", "newStatus" => $new_status]);
+} catch (Throwable $e) {
     $conn->rollback();
-    echo json_encode(["status" => "error", "message" => "Database error"]);
+    $ref = ec_log_exception($e, 'hod_action');
+    ec_json(["status" => "error", "message" => "Could not complete the action. Reference: {$ref}"], 500);
 }
-?>
