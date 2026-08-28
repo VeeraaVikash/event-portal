@@ -6,7 +6,64 @@ from a CDN. There is no build step and no package manager.
 
 ---
 
-## Running locally
+## Setup
+
+Requirements: **PHP 8.1+** (with `mysqli`, `json`, `session`, `mbstring`,
+`fileinfo`) and **MySQL 8.0+**. There is no build step and no package manager.
+
+### 1. Configure database credentials
+
+Credentials are **not** stored in the repository. `includes/db.php` reads them
+from the environment first, then from `includes/config.local.php` — an
+untracked file holding the values for your machine.
+
+```bash
+cp includes/config.local.example.php includes/config.local.php
+```
+
+Then edit `includes/config.local.php`:
+
+```php
+return [
+    'host'     => 'localhost',
+    'user'     => 'eventadmin',
+    'password' => 'your_db_password',
+    'dbname'   => 'event',
+    'port'     => 3306,
+    'socket'   => null,   // unix socket path, or null to use TCP
+];
+```
+
+Every value can also come from the environment, which takes precedence over the
+file: `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`, `DB_SOCKET`.
+Use these for shared or production deployments and leave `config.local.php`
+absent.
+
+### 2. Create the database and user
+
+```sql
+CREATE DATABASE event CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'eventadmin'@'localhost' IDENTIFIED BY 'your_db_password';
+GRANT ALL PRIVILEGES ON event.* TO 'eventadmin'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+### 3. Create the tables
+
+On a **new, empty** database, load the full schema:
+
+```bash
+mysql -u eventadmin -p event < migrations/schema.sql
+```
+
+That file creates all nine tables in dependency order and already includes
+everything the migration adds, so no migration is needed afterwards. It uses
+`CREATE TABLE IF NOT EXISTS`, so re-running it is a no-op.
+
+On a **pre-existing legacy** database, run the migration instead — see
+[Database migration](#database-migration).
+
+### 4. Run
 
 ```bash
 php -S localhost:8000
@@ -15,7 +72,119 @@ php -S localhost:8000
 Then open <http://localhost:8000>. All paths are relative, so the site works
 from any document root.
 
-Database settings live in `includes/db.php`.
+### 5. Verify
+
+```bash
+php scripts/check_backend.php
+```
+
+Exit code `0` means the environment is set up correctly.
+
+---
+
+## Setting up on Windows
+
+The application itself is portable — only the environment differs. Two routes:
+
+### Route A — XAMPP (simplest)
+
+1. Install [XAMPP](https://www.apachefriends.org/) (PHP 8.1+). This bundles
+   Apache, PHP and MariaDB, which is drop-in compatible here.
+2. Start **Apache** and **MySQL** from the XAMPP Control Panel.
+3. Copy the project into `C:\xampp\htdocs\eventconnect`.
+4. Create the database at <http://localhost/phpmyadmin> — add a database named
+   `event` with collation `utf8mb4_unicode_ci`, then create the user and grant
+   as in step 2 above. With `event` selected, open the **Import** tab and load
+   `migrations\schema.sql` to create the tables.
+5. Create `includes\config.local.php` from the example. On Windows there is no
+   unix socket, so **`socket` must be `null`** and the connection goes over TCP:
+
+   ```php
+   return [
+       'host'     => '127.0.0.1',
+       'user'     => 'eventadmin',
+       'password' => 'your_db_password',
+       'dbname'   => 'event',
+       'port'     => 3306,
+       'socket'   => null,
+   ];
+   ```
+
+   XAMPP's default MariaDB root account has an empty password; if you use it
+   directly, set `'user' => 'root'` and `'password' => ''`.
+6. Check the install from a terminal in the project folder:
+
+   ```powershell
+   C:\xampp\php\php.exe scripts\check_backend.php
+   ```
+
+   All checks should pass. If you loaded `schema.sql` in step 4 there is no
+   migration to run.
+
+7. Open <http://localhost/eventconnect>.
+
+### Route B — standalone PHP + MySQL (no Apache)
+
+1. Install PHP for Windows from [windows.php.net](https://windows.php.net/download/)
+   (pick a **Thread Safe** x64 build) and unzip to `C:\php`.
+2. Add `C:\php` to `PATH`, then enable the required extensions in `C:\php\php.ini`
+   by uncommenting these lines (remove the leading `;`):
+
+   ```ini
+   extension_dir = "ext"
+   extension=mysqli
+   extension=mbstring
+   extension=fileinfo
+   extension=openssl
+   ```
+
+3. Install [MySQL Community Server](https://dev.mysql.com/downloads/mysql/) and
+   create the database and user as in step 2 above, then load the schema:
+
+   ```powershell
+   mysql -h 127.0.0.1 -u eventadmin -p event < migrations\schema.sql
+   ```
+
+4. Create `includes\config.local.php` with `'socket' => null` as shown in Route A.
+5. Run the built-in server from the project folder:
+
+   ```powershell
+   php -S localhost:8000
+   php scripts\check_backend.php
+   ```
+
+### Windows-specific notes
+
+- **`socket` must be `null`.** Unix socket paths like
+  `/Users/.../mysql.sock` do not exist on Windows; leaving one in place causes
+  a connection failure. Connect over TCP to `127.0.0.1:3306` instead.
+- **Prefer `127.0.0.1` over `localhost`.** On some Windows setups `localhost`
+  resolves to IPv6 `::1` while MySQL only listens on IPv4, which shows up as
+  "connection refused".
+- **Set environment variables** (alternative to the config file) in PowerShell:
+
+  ```powershell
+  $env:DB_HOST = "127.0.0.1"
+  $env:DB_USER = "eventadmin"
+  $env:DB_PASSWORD = "your_db_password"
+  $env:DB_NAME = "event"
+  php -S localhost:8000
+  ```
+
+  These last only for that shell session. For a permanent value use
+  `[Environment]::SetEnvironmentVariable("DB_NAME", "event", "User")`.
+- **`reports/` must be writable** by the account running PHP. Under IIS or
+  Apache-as-a-service that is the service account, not your login.
+- **Backups** use the same `mysqldump`, without the socket flag:
+
+  ```powershell
+  mysqldump -h 127.0.0.1 -u root -p --databases event --routines --triggers `
+    --single-transaction > backups\event_backup.sql
+  ```
+
+- **Line endings.** The repository has no `.gitattributes`; if Git converts PHP
+  files to CRLF it is harmless, but `git config core.autocrlf false` keeps the
+  working tree byte-identical to what is committed.
 
 ---
 
@@ -103,6 +272,9 @@ syntax check reports `SKIP`, never `PASS`.
 
 ## Database migration
 
+Only needed for a **pre-existing legacy** database. A database created from
+`migrations/schema.sql` is already current — skip this section.
+
 `migrations/2026_08_28_align_schema_with_app.php` brings a legacy database up to
 what the application code expects. It was required because the deployed schema
 predated the code: `proposals.status` lacked `Review`, `Cancelled` and
@@ -162,9 +334,11 @@ Restoring the pre-migration dump is the supported rollback path.
   the stored file is removed if the database write fails.
 - Endpoint errors return a short opaque reference. The underlying exception goes
   to the PHP error log via `error_log()` — look for `[eventconnect][...][ref:…]`.
-- `includes/db.php` holds plaintext credentials and is committed to the
-  repository. That is acceptable for local development only; use environment
-  variables or an untracked config file before deploying anywhere shared.
+- No credentials are committed. `includes/db.php` reads them from the
+  environment (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`,
+  `DB_SOCKET`) or from `includes/config.local.php`, which is listed in
+  `.gitignore`. Only `includes/config.local.example.php`, containing
+  placeholders, is tracked.
 
 ### Not addressed
 
