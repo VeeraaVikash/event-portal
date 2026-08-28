@@ -361,7 +361,7 @@ require 'partials/nav.php';
                 if (isCompleted) {
                     if (data.report_path) {
                         const vrt = document.getElementById('viewerViewReportBtn');
-                        if (vrt) { vrt.href = data.report_path; vrt.classList.remove('hidden'); }
+                        if (vrt) { vrt.href = 'download_report.php?id=' + id; vrt.classList.remove('hidden'); }
                     } else {
                         const grt = document.getElementById('viewerGenerateReportBtn');
                         if (grt) { grt.classList.remove('hidden'); window.generatorPayload = data; }

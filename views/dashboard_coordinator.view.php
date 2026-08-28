@@ -436,7 +436,7 @@ require 'partials/nav.php';
                 if (isCompleted && data.report_path) {
                     const vrt = document.getElementById('viewerViewReportBtn');
                     if (vrt) {
-                        vrt.href = data.report_path;
+                        vrt.href = 'download_report.php?id=' + id;
                         vrt.classList.remove('hidden');
                     }
                 }

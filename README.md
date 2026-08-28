@@ -235,6 +235,148 @@ someone else's decision. Updates additionally use a compare-and-swap on
 
 ---
 
+## Deploying on IIS (college server)
+
+A campus server is a different threat model from `localhost`. Work through this
+in order; steps 1–6 are not optional.
+
+### 1. Install the PHP handler
+
+IIS does not run PHP on its own.
+
+1. Server Manager → **Add Roles and Features** → Web Server (IIS), and under
+   Application Development enable **CGI**.
+2. Install PHP 8.1+ **Non-Thread-Safe** x64 to `C:\php` (non-thread-safe is the
+   correct build for FastCGI; the thread-safe build is for Apache).
+3. In `C:\php\php.ini` uncomment `extension_dir = "ext"` and
+   `extension=mysqli`, `mbstring`, `fileinfo`, `openssl`.
+4. IIS Manager → server node → **Handler Mappings** → *Add Module Mapping*:
+
+   | Field | Value |
+   |---|---|
+   | Request path | `*.php` |
+   | Module | `FastCgiModule` |
+   | Executable | `C:\php\php-cgi.exe` |
+   | Name | `PHP_via_FastCGI` |
+
+5. **Default Document** → add `index.php`.
+
+### 2. Deploy the files
+
+Copy the project to e.g. `C:\inetpub\wwwroot\eventconnect`, then in IIS Manager
+add an Application or Site pointing at it.
+
+**Do not copy `.git`.** It contains the full history, including the database
+credentials from before they were moved out of `includes/db.php`. Export a
+clean tree instead:
+
+```powershell
+git archive --format=zip --output=eventconnect.zip HEAD
+```
+
+`web.config` in the site root is picked up automatically. It disables directory
+browsing, blocks `reports`, `includes`, `migrations`, `scripts`, `backups`,
+`.git` and `.claude` from the web, removes the `X-Powered-By` banner, and sets
+`X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy`.
+
+### 3. Give the app pool write access to `reports/`
+
+Report uploads are written by the IIS worker process, not by your login.
+
+1. IIS Manager → Application Pools → note the pool name (e.g. `eventconnect`).
+2. Right-click the `reports` folder → Properties → Security → Edit → Add.
+3. Enter `IIS AppPool\eventconnect`, click **Check Names**, grant
+   **Modify**.
+
+Grant this on `reports\` only. The rest of the site should stay read-only to
+the worker — that way a compromised upload cannot rewrite application code.
+
+### 4. Database
+
+Create the database and user on the college MySQL server, load
+`migrations\schema.sql`, then create `includes\config.local.php` with
+`'socket' => null` and `'host' => '127.0.0.1'` (or the DB server's hostname).
+
+**Rotate the password.** The old one (`eventpass`) is in git history and must
+not be reused on a shared server. Grant only what the app needs — it never
+issues DDL at runtime:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON event.* TO 'eventadmin'@'localhost';
+```
+
+Run the migration under a temporarily broader grant, then drop back to this.
+
+### 5. Turn off error display
+
+`php.ini` on the server:
+
+```ini
+display_errors = Off
+display_startup_errors = Off
+log_errors = On
+error_log = "C:\inetpub\logs\php_errors.log"
+expose_php = Off
+session.cookie_httponly = 1
+session.cookie_secure = 1     ; requires HTTPS (step 6)
+session.cookie_samesite = Lax
+```
+
+`display_errors = On` prints file paths, queries and connection details onto
+the page. The app already routes exceptions to `error_log()` with a reference
+code, which is what users should see instead.
+
+### 6. HTTPS
+
+Bind a certificate to the site (your IT department will normally issue one for
+the campus domain), then uncomment the **Force HTTPS** rewrite rule in
+`web.config`. It needs the
+[URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite).
+
+Sessions travel in a cookie. Without TLS, anyone on the campus network can read
+a logged-in HOD's session cookie off the wire and act as them.
+
+Once HTTPS is confirmed working, uncomment the
+`Strict-Transport-Security` header too.
+
+### 7. Verify
+
+```powershell
+C:\php\php.exe scripts\check_backend.php
+```
+
+Then confirm from a browser **on another machine** that these are all blocked:
+
+| URL | Expected |
+|---|---|
+| `https://host/eventconnect/reports/` | 404 — no directory listing |
+| `https://host/eventconnect/reports/Report_PRO_0001_1776167030.pdf` | 404 |
+| `https://host/eventconnect/includes/db.php` | 404 |
+| `https://host/eventconnect/includes/config.local.php` | 404 |
+| `https://host/eventconnect/.git/config` | 404 |
+| `https://host/eventconnect/migrations/schema.sql` | 404 |
+
+If any of these returns content, stop and fix `web.config` before letting
+anyone use the site.
+
+### Known gaps to raise with your IT department
+
+These are unresolved in the application and matter more on a shared server:
+
+- **No rate limiting on login.** Passwords can be guessed at network speed.
+  Mitigate with IIS **Dynamic IP Restrictions**, or put the site behind the
+  campus SSO/VPN.
+- **No CSRF token on `login.php` / `signup.php`.** Every other state-changing
+  endpoint has one; authentication was deliberately left untouched.
+- **The three demo accounts** (`faculty@srm.edu`, `coordinator@srm.edu`,
+  `hod@srm.edu`) must be deleted or given strong unique passwords before the
+  site is reachable by anyone else. They are well-known credentials.
+- **Report PDFs already in the repository** (`reports/*.pdf`, 25 files) ship
+  with the code. If they contain real event data, remove them from the deployed
+  copy and from git.
+
+---
+
 ## Health check
 
 ```bash
@@ -332,6 +474,15 @@ Restoring the pre-migration dump is the supported rollback path.
 - All queries use prepared statements.
 - Report uploads are checked for the `%PDF-` signature and a 20 MB ceiling;
   the stored file is removed if the database write fails.
+- Report PDFs are served only through `download_report.php`, which requires a
+  session and applies the same permission rule as `api_proposal_details.php`
+  (the owning convener, or an HOD/coordinator in the same department). The
+  stored path comes from the database rather than the request, and is confirmed
+  to resolve inside `reports/`. `web.config` blocks direct access to the folder,
+  because report filenames are predictable (`Report_PRO_0007_<unixtime>.pdf`)
+  and a directly reachable `reports/` would let anyone enumerate them without
+  logging in. **On any server other than localhost, serving `reports/` directly
+  is a data leak.**
 - Endpoint errors return a short opaque reference. The underlying exception goes
   to the PHP error log via `error_log()` — look for `[eventconnect][...][ref:…]`.
 - No credentials are committed. `includes/db.php` reads them from the
