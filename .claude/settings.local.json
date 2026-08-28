@@ -12,7 +12,8 @@
       "Bash(rm -f /private/tmp/claude-502/-Users-user49-Downloads-eventconnect/3a48e299-b942-4f07-ae1e-c6a4d36ce197/scratchpad/sandbox/migrations_test.php)",
       "Bash(git add *)",
       "Bash(git -c user.name=claude -c user.email=claude@local commit -q -m 'Add additive schema migration aligning DB with application code *)",
-      "Bash(git -c user.name=claude -c user.email=claude@local commit -q -m 'Fix SQLi, IDOR, missing state rules, CSRF and unsafe uploads *)"
+      "Bash(git -c user.name=claude -c user.email=claude@local commit -q -m 'Fix SQLi, IDOR, missing state rules, CSRF and unsafe uploads *)",
+      "Bash(git -c user.name=claude -c user.email=claude@local commit -q -m 'Send expected_status from dashboards to block conflicting decisions *)"
     ]
   }
 }

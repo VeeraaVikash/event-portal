@@ -569,7 +569,12 @@ require 'partials/nav.php';
         if (!reason) { alert("Please provide a valid reason."); return; }
         if (actionType === 'reschedule' && (!start || !end)) { alert("Please provide both new dates."); return; }
 
+        // Send the status this page was showing so the server can reject the
+        // action if the proposal has since moved on.
         const payload = { id: actionTargetId, action: actionType, reason: reason };
+        if (activeProposalStatus) {
+            payload.expected_status = activeProposalStatus;
+        }
         if (actionType === 'reschedule') {
             payload.new_start = start;
             payload.new_end = end;

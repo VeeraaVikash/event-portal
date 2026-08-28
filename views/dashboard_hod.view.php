@@ -459,6 +459,7 @@ require 'partials/nav.php';
     let activeProposalId = null;
     let actionType = '';
     let actionTargetId = null;
+    let actionExpectedStatus = null;
 
     function openViewer(id, status) {
         activeProposalId = id;
@@ -482,9 +483,12 @@ require 'partials/nav.php';
             document.getElementById('viewerRejectBtn').classList.remove('hidden');
         }
 
-        document.getElementById('viewerApproveBtn').onclick = () => approveProposal(id);
-        document.getElementById('viewerRejectBtn').onclick = () => openActionModal('reject', id);
-        document.getElementById('viewerReviewBtn').onclick = () => openActionModal('review', id);
+        // The status shown to this HOD travels with the action, so a decision
+        // made from a stale dashboard is rejected instead of overwriting a
+        // decision someone else already recorded.
+        document.getElementById('viewerApproveBtn').onclick = () => approveProposal(id, status);
+        document.getElementById('viewerRejectBtn').onclick = () => openActionModal('reject', id, status);
+        document.getElementById('viewerReviewBtn').onclick = () => openActionModal('review', id, status);
 
         fetch('api_proposal_details.php?id=' + id)
             .then(res => res.json())
@@ -689,24 +693,31 @@ require 'partials/nav.php';
     }
 
     /* ACTION MODAL LOGIC */
-    function approveProposal(id) {
+    function approveProposal(id, expectedStatus) {
         if (!confirm("Are you sure you want to approve this?")) return;
+        const btn = document.getElementById('viewerApproveBtn');
+        if (btn) btn.disabled = true;
         fetch('api_proposal_hod_action.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: id, action: 'approve' })
+            body: JSON.stringify({ id: id, action: 'approve', expected_status: expectedStatus })
         }).then(res => res.json()).then(data => {
             if (data.status === 'success') {
                 window.location.href = 'dashboard_hod.php';
             } else {
                 alert("Error: " + data.message);
+                if (btn) btn.disabled = false;
             }
+        }).catch(() => {
+            alert("Network error. Please try again.");
+            if (btn) btn.disabled = false;
         });
     }
 
-    function openActionModal(action, id) {
+    function openActionModal(action, id, expectedStatus) {
         actionType = action;
         actionTargetId = id;
+        actionExpectedStatus = expectedStatus;
         document.getElementById('actionModalTitle').innerText = action === 'reject' ? 'Reject Proposal' : 'Review';
         document.getElementById('actionReason').value = '';
         document.getElementById('actionModal').classList.remove('hidden');
@@ -724,7 +735,7 @@ require 'partials/nav.php';
         fetch('api_proposal_hod_action.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: actionTargetId, action: actionType, reason: reason })
+            body: JSON.stringify({ id: actionTargetId, action: actionType, reason: reason, expected_status: actionExpectedStatus })
         })
         .then(res => res.json())
         .then(data => {
@@ -734,6 +745,10 @@ require 'partials/nav.php';
                 alert("Error: " + data.message);
                 document.getElementById('actionConfirmBtn').disabled = false;
             }
+        })
+        .catch(() => {
+            alert("Network error. Please try again.");
+            document.getElementById('actionConfirmBtn').disabled = false;
         });
     }
 
