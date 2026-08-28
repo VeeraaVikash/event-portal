@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(xargs -r kill)",
+      "Bash(php *)",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(chmod +x /private/tmp/claude-502/-Users-user49-Downloads-eventconnect/3a48e299-b942-4f07-ae1e-c6a4d36ce197/scratchpad/baseline.sh)",
+      "Bash(zsh /private/tmp/claude-502/-Users-user49-Downloads-eventconnect/3a48e299-b942-4f07-ae1e-c6a4d36ce197/scratchpad/baseline.sh)"
+    ]
+  }
+}
