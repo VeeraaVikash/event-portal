@@ -6,7 +6,12 @@
       "Bash(php *)",
       "Bash(echo \"=== exit: $? ===\")",
       "Bash(chmod +x /private/tmp/claude-502/-Users-user49-Downloads-eventconnect/3a48e299-b942-4f07-ae1e-c6a4d36ce197/scratchpad/baseline.sh)",
-      "Bash(zsh /private/tmp/claude-502/-Users-user49-Downloads-eventconnect/3a48e299-b942-4f07-ae1e-c6a4d36ce197/scratchpad/baseline.sh)"
+      "Bash(zsh /private/tmp/claude-502/-Users-user49-Downloads-eventconnect/3a48e299-b942-4f07-ae1e-c6a4d36ce197/scratchpad/baseline.sh)",
+      "Bash(mkdir -p /private/tmp/claude-502/-Users-user49-Downloads-eventconnect/3a48e299-b942-4f07-ae1e-c6a4d36ce197/scratchpad/sandbox/migrations)",
+      "Bash(cp /Users/user49/Downloads/eventconnect/migrations/2026_08_28_align_schema_with_app.php /private/tmp/claude-502/-Users-user49-Downloads-eventconnect/3a48e299-b942-4f07-ae1e-c6a4d36ce197/scratchpad/sandbox/migrations/)",
+      "Bash(rm -f /private/tmp/claude-502/-Users-user49-Downloads-eventconnect/3a48e299-b942-4f07-ae1e-c6a4d36ce197/scratchpad/sandbox/migrations_test.php)",
+      "Bash(git add *)",
+      "Bash(git -c user.name=claude -c user.email=claude@local commit -q -m 'Add additive schema migration aligning DB with application code *)"
     ]
   }
 }
