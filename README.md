@@ -194,7 +194,7 @@ Three roles, resolved from `users.role` and stored in `$_SESSION['role']`:
 
 | Role | Dashboard | Can do |
 |---|---|---|
-| Convener (`faculty` / `Convener`) | `dashboard.php` | create, edit and resubmit own proposals; cancel; reschedule an approved event; upload the event report; chat while under review |
+| Convener (`faculty` / `Convener`) | `dashboard.php` | create, edit and resubmit own proposals; cancel; reschedule an approved event; print a pre-event draft; attach photographs, videos and documents and generate the post-event report; chat while under review |
 | HOD (`hod`) | `dashboard_hod.php` | approve, reject or request changes on proposals **from their own department**; chat while under review |
 | Coordinator (`coordinator`) | `dashboard_coordinator.php` | read-only monitoring of their department, CSV export, pre-approved event import |
 
@@ -222,8 +222,9 @@ Rules enforced server-side:
 - Only `Approved` events can be rescheduled.
 - `Approved`, `Rejected` and `Cancelled` proposals can no longer be edited.
 - An HOD may still reverse an earlier decision from a **refreshed** dashboard.
-- Only the owner may edit a proposal or upload its report; HODs and
-  coordinators are limited to their own department.
+- Only the owner may edit a proposal, attach report files or generate its
+  report; HODs and coordinators are limited to their own department.
+- A report can only be generated after the event has ended, and only once.
 
 ### Concurrent decisions
 
@@ -232,6 +233,161 @@ every action. If the proposal has changed since the page was loaded, the server
 returns **409** and asks the user to refresh instead of silently overwriting
 someone else's decision. Updates additionally use a compare-and-swap on
 `status`, so two simultaneous writes cannot both apply.
+
+---
+
+## Event reports
+
+### Before the event — draft
+
+Once a proposal is **Approved** and the end date has not passed, the convener
+sees **Print Draft** in the proposal viewer. It builds the proposal as a PDF in
+the browser and opens it in a new tab to print or hand to the HOD.
+
+The draft is never uploaded and never stored: nothing on the server changes when
+it is produced, and it is watermarked as a draft so it cannot be mistaken for
+the filed report. A proposal that is still `Pending` or under `Review` has no
+draft button — there is nothing settled to circulate yet.
+
+### After the event — the report
+
+Once the end date has passed on an approved event, the convener sees **Create
+Event Report**, which opens the report workspace:
+
+| Attachment | Accepted | Per-file limit | Where it ends up |
+|---|---|---|---|
+| Photographs | JPG, PNG, WebP, GIF | 10 MB | printed as full pages inside the PDF |
+| Videos | MP4, WebM, MOV, M4V | 100 MB | stored; linked from the annexure |
+| Documents & bills | PDF, Word, Excel, PowerPoint, TXT, CSV | 25 MB | stored; linked from the annexure |
+
+Files upload as soon as they are chosen, so a report can be assembled over
+several sittings, and a 100 MB video is only ever sent once. **Preview & Print**
+builds the current state of the report without saving anything. **Generate &
+Save Final Report** builds it and stores it against the proposal.
+
+The report contains everything entered in the proposal — the convener's name,
+designation and contact, dates, participants, chief guests, travel, budget and
+funding — plus the photographs, plus an
+**annexure** listing every video and document with its size, a link, and a QR
+code. A PDF cannot play a video and the browser generator cannot merge foreign
+documents, so the annexure is how they travel with the report: scanning the code
+opens `download_media.php`, which requires a session.
+
+**Generation is one-shot.** Once the final report exists, attachments are frozen
+and a second generation is refused (409). This is what the workspace promises on
+screen, so it is enforced server-side rather than only in the UI.
+
+### Who can see what
+
+| | Convener (owner) | HOD / coordinator, same dept | Anyone else |
+|---|---|---|---|
+| Attach / remove files | yes, until generated | no | no |
+| Generate the report | yes, once, after the event | no | no |
+| Open an attachment | yes | yes | 404 |
+| Open the report PDF | yes | yes | 404 |
+
+### Storage
+
+Attachments go to `uploads/media/<proposal_id>/` under generated names; the
+original filename is stored in the database and only ever displayed. The
+directory must **not** be reachable from the web — `.htaccess` and `web.config`
+both block the `uploads` segment, exactly as they block `reports`.
+`download_media.php` is the only supported way to read one.
+
+The web server user needs write access to `uploads/` as well as `reports/`.
+
+### php.ini
+
+The application's own limits are above PHP's defaults, and PHP enforces its
+limits first. Without this a convener uploading a video gets PHP's error rather
+than the application's:
+
+```ini
+upload_max_filesize = 100M
+post_max_size       = 110M
+```
+
+A request larger than `post_max_size` arrives with everything stripped, which
+the upload endpoint detects and reports as **413** with an explanation.
+
+---
+
+## E-mail reminders
+
+Three reminders go out automatically:
+
+| When | Kind | Goes to |
+|---|---|---|
+| 2 days before the start date | `before_2days` | convener, coordinator(s) and HOD of the convener's department |
+| on the start date | `day_of` | the same three |
+| a week after the end date, if no report has been filed | `report_due` | the convener only |
+
+Only `Approved` proposals are considered. The report reminder stops as soon as
+the report exists. The first two fire on an exact date — a "your event is in two
+days" mail sent four days late is worse than none — while the report reminder
+uses a 7-to-14-day window, so a scheduler that was down for a few days still
+catches it without chasing events that ended long ago.
+
+### Configuration
+
+There is no local MTA on a default XAMPP install and PHP's `mail()` silently
+discards everything, so reminders speak SMTP directly. Add an `smtp` block to
+`includes/config.local.php` (see `includes/config.local.example.php`):
+
+```php
+'app_url' => 'https://events.example.edu/eventconnect',
+'smtp' => [
+    'host'      => 'smtp.gmail.com',
+    'port'      => 587,
+    'user'      => 'events@srmist.edu.in',
+    'password'  => 'your app password',
+    'secure'    => 'tls',
+    'from'      => 'events@srmist.edu.in',
+    'from_name' => 'SRM Event Connect',
+],
+```
+
+Gmail needs an **App Password** (Google Account → Security → 2-Step Verification
+→ App passwords), not the account password. `app_url` is what the links in the
+mail point at; cron has no request to infer it from, so set it explicitly.
+
+**Leaving `host` empty disables sending.** The sweep then does nothing instead of
+failing, which is the right default for a machine that should not be mailing
+people.
+
+### Running the sweep
+
+```bash
+php scripts/send_reminders.php --dry-run       # what would go out, sends nothing
+php scripts/send_reminders.php                 # send
+php scripts/send_reminders.php --retry-failed  # re-attempt earlier failures
+```
+
+Daily from cron (`crontab -e`):
+
+```
+0 7 * * * /Applications/XAMPP/xamppfiles/bin/php /path/to/eventconnect/scripts/send_reminders.php >> /var/log/eventconnect-reminders.log 2>&1
+```
+
+On Windows, a daily Task Scheduler job running
+`C:\php\php.exe C:\inetpub\wwwroot\eventconnect\scripts\send_reminders.php`.
+The script exits `1` if anything failed, so the scheduler can alert.
+
+**If no scheduler is set up**, a dashboard load runs a catch-up sweep instead.
+It is throttled to once an hour across all users, capped at ten messages, and
+runs after the page has been flushed so nobody waits on SMTP. Cron is still
+better — reminders are date-sensitive, and a quiet week means nobody triggers
+the catch-up.
+
+### Nobody gets mailed twice
+
+`reminder_log` has a unique key on (proposal, kind, recipient), and each send
+claims its row *before* the message leaves. Cron and the catch-up can run at the
+same time; the loser hits the unique key and moves on. Failures stay in the log
+with the SMTP error, visible in the table and re-sendable with `--retry-failed`.
+
+A mail server that is down never breaks a page: every failure is caught, logged
+and swallowed.
 
 ---
 
@@ -279,7 +435,7 @@ browsing, blocks `reports`, `includes`, `migrations`, `scripts`, `backups`,
 `.git` and `.claude` from the web, removes the `X-Powered-By` banner, and sets
 `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy`.
 
-### 3. Give the app pool write access to `reports/`
+### 3. Give the app pool write access to `reports/` and `uploads/`
 
 Report uploads are written by the IIS worker process, not by your login.
 
@@ -351,6 +507,8 @@ Then confirm from a browser **on another machine** that these are all blocked:
 |---|---|
 | `https://host/eventconnect/reports/` | 404 — no directory listing |
 | `https://host/eventconnect/reports/Report_PRO_0001_1776167030.pdf` | 404 |
+| `https://host/eventconnect/uploads/` | 404 — no directory listing |
+| `https://host/eventconnect/uploads/media/1/photo_abc.jpg` | 404 |
 | `https://host/eventconnect/includes/db.php` | 404 |
 | `https://host/eventconnect/includes/config.local.php` | 404 |
 | `https://host/eventconnect/.git/config` | 404 |
@@ -371,6 +529,11 @@ These are unresolved in the application and matter more on a shared server:
 - **The three demo accounts** (`faculty@srm.edu`, `coordinator@srm.edu`,
   `hod@srm.edu`) must be deleted or given strong unique passwords before the
   site is reachable by anyone else. They are well-known credentials.
+- **`scripts/seed_demo.php` sets a known password** (`test` by default) on two
+  accounts and creates sample proposals. It is CLI-only and `scripts/` is
+  blocked from the web, but it must never be run on the deployed server. If it
+  has been, rotate those two passwords and delete the `[DEMO]` proposals with
+  `php scripts/seed_demo.php --remove`.
 - **Report PDFs already in the repository** (`reports/*.pdf`, 25 files) ship
   with the code. If they contain real event data, remove them from the deployed
   copy and from git.
@@ -429,6 +592,21 @@ php migrations/2026_08_28_align_schema_with_app.php --dry-run   # preview
 php migrations/2026_08_28_align_schema_with_app.php             # apply
 ```
 
+`migrations/2026_09_13_report_media_and_reminders.php` adds what the report
+attachments and the e-mail reminders need: the `proposal_media`, `reminder_log`
+and `app_state` tables, and `proposals.report_generated_at`. Unlike the one
+above, this is needed on **every** database that predates those features, not
+only legacy ones.
+
+```bash
+php migrations/2026_09_13_report_media_and_reminders.php --dry-run
+php migrations/2026_09_13_report_media_and_reminders.php
+```
+
+It is additive and idempotent in the same way, and it back-fills
+`report_generated_at` for reports that already exist so the "report overdue"
+reminder does not chase conveners who have already filed.
+
 **Compatibility.** Purely additive and idempotent. Nothing is renamed, dropped
 or narrowed; every existing enum member (including the unused `Revision`) is
 kept, and all legacy columns are left in place. Older code continues to work
@@ -437,8 +615,10 @@ against the migrated schema. Re-running it is a no-op.
 **Deployment order**
 
 1. Back up the database (see below).
-2. Run the migration — it is additive, so it is safe to run before deploying code.
-3. Deploy the application files.
+2. Run the migrations — they are additive, so they are safe to run before
+   deploying code.
+3. Deploy the application files, and make sure `uploads/` exists and is writable
+   by the web server user.
 4. Run `php scripts/check_backend.php` and confirm exit code `0`.
 
 ### Backup and restore

@@ -1,0 +1,61 @@
+# Apache configuration for SRM Event Connect.
+#
+# This is the Apache counterpart to web.config, which only IIS reads. It must
+# sit in the site root alongside index.php. If the two files ever drift apart,
+# a deployment is protected on one server and exposed on the other.
+#
+# XAMPP note: this file only takes effect if httpd.conf has AllowOverride All
+# for C:\xampp\htdocs (the XAMPP default). Verify with the check at the bottom
+# of this file before trusting any of these rules.
+
+DirectoryIndex index.php
+
+# Never list directory contents. Without this, /reports/ returns an index of
+# every uploaded report PDF.
+Options -Indexes
+
+# Paths the browser must never reach directly. See the hiddenSegments comment
+# in web.config for why each one matters. Patterns are relative to this
+# directory, so they hold no matter what folder the app is deployed under.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(includes|migrations|scripts|backups|reports|uploads|\.git|\.claude)(/|$) - [F,L]
+</IfModule>
+
+# Belt and braces: deny by extension too, so a missing mod_rewrite does not
+# silently expose the schema dump or the docs.
+<FilesMatch "\.(sql|md|json|log|ya?ml|config|lock)$">
+    Require all denied
+</FilesMatch>
+
+# Dotfiles: .htaccess itself, .gitignore, .env and anything similar.
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+# The application only ever uses these three.
+<LimitExcept GET POST HEAD>
+    Require all denied
+</LimitExcept>
+
+<IfModule mod_headers.c>
+    # Apache advertises its version and PHP's by default.
+    Header unset X-Powered-By
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Enable once the site is on HTTPS and you are sure it will stay there:
+    # browsers remember this for max-age seconds.
+    # Header always set Strict-Transport-Security "max-age=31536000"
+</IfModule>
+
+# Reports are capped at 20 MB in api_save_report.php; allow headroom for
+# multipart overhead so the app's own error message is what the user sees.
+# These are php.ini settings rather than Apache ones - set them there, since
+# php_value here throws a 500 unless PHP runs as an Apache module:
+#     upload_max_filesize = 21M
+#     post_max_size       = 21M
+#
+# Also set display_errors = Off in php.ini once login works. Leave it On for
+# now: it is what will show you the real MySQL error from db.php.

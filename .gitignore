@@ -1,3 +1,7 @@
 .DS_Store
 backups/
 includes/config.local.php
+
+# Generated event reports and their attachments are data, not source. The
+# report PDFs already committed stay tracked; new ones do not join them.
+reports/*.pdf

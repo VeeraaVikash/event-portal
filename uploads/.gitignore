@@ -1,0 +1,4 @@
+# Report attachments are deployment data, not source. The directory itself is
+# tracked so a fresh clone has somewhere to write; its contents are not.
+*
+!.gitignore

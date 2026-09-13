@@ -9,9 +9,10 @@
 --     CREATE DATABASE event CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 --     mysql -u <user> -p event < migrations/schema.sql
 --
--- This already reflects the changes made by
--- 2026_08_28_align_schema_with_app.php, so a database created from this file
--- needs no migration. Run that migration only on a pre-existing legacy
+-- This already reflects the changes made by both migrations
+-- (2026_08_28_align_schema_with_app.php and
+-- 2026_09_13_report_media_and_reminders.php), so a database created from this
+-- file needs no migration. Run the migrations only on a pre-existing legacy
 -- database.
 --
 -- Contains structure only. No rows, and therefore no user data.
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS `proposals` (
   `participant_categories` text COLLATE utf8mb4_unicode_ci,
   `student_categories` text COLLATE utf8mb4_unicode_ci,
   `report_path` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `report_generated_at` datetime DEFAULT NULL,
   `status` enum('Pending','Approved','Rejected','Revision','Review','Cancelled','Rescheduled') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'Pending',
   `hod_status` enum('Pending','Approved','Rejected','Revision') COLLATE utf8mb4_unicode_ci DEFAULT 'Pending',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
@@ -157,6 +159,45 @@ CREATE TABLE IF NOT EXISTS `proposal_travel_accomm` (
   PRIMARY KEY (`id`),
   KEY `proposal_id` (`proposal_id`),
   CONSTRAINT `proposal_travel_accomm_ibfk_1` FOREIGN KEY (`proposal_id`) REFERENCES `proposals` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `proposal_media` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `proposal_id` int NOT NULL,
+  `kind` enum('photo','video','document') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `original_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `stored_path` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `mime_type` varchar(150) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `size_bytes` bigint NOT NULL DEFAULT '0',
+  `uploaded_by` int NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_media_proposal` (`proposal_id`),
+  CONSTRAINT `proposal_media_ibfk_1` FOREIGN KEY (`proposal_id`) REFERENCES `proposals` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- One row per (proposal, reminder kind, recipient). The unique key is what
+-- lets cron and the dashboard catch-up run without mailing anyone twice.
+CREATE TABLE IF NOT EXISTS `reminder_log` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `proposal_id` int NOT NULL,
+  `kind` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `recipient` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('sent','failed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'sent',
+  `error` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `sent_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_reminder` (`proposal_id`,`kind`,`recipient`),
+  KEY `idx_reminder_sent` (`sent_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Small key/value store; currently only the timestamp of the last reminder
+-- sweep, which throttles the page-load catch-up.
+CREATE TABLE IF NOT EXISTS `app_state` (
+  `name` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `value` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

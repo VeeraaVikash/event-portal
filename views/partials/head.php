@@ -45,6 +45,9 @@ if(!isset($body_class)) {
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- PDF Generation Runtime -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- QR codes for the report annexure. If it fails to load the annexure
+         prints the plain URL instead, so the report is never blocked on it. -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',

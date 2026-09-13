@@ -9,7 +9,8 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
 
 $user_id = $_SESSION["id"];
 $edit_data = [];
-$form_error = null;
+$form_errors = [];   // [['field' => ..., 'message' => ...], ...] when a POST fails validation
+$old_input = [];     // what the convener typed, so a rejected POST is handed back filled in
 
 // Handle Form Submission
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
@@ -35,22 +36,53 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     // Handle specific checkbox name formatting fix internally
     $part_cats = str_replace('Students (Category)', 'Students', $part_cats);
 
-    // Validate before writing anything.
+    // Validate before writing anything. Every problem is collected so the form can
+    // list them all at once instead of surfacing one field per attempt.
     $errors = [];
-    if($title === '') {
-        $errors[] = 'Title is required';
+    $require = function(string $field, string $label, $value) use (&$errors) {
+        if(trim((string)$value) === '') {
+            $errors[] = ['field' => $field, 'message' => $label . ' is required'];
+        }
+    };
+
+    $require('title', 'Event Title', $title);
+    $require('description', 'Event Description', $desc);
+    $require('category', 'Event Category', $category);
+
+    if(!ec_valid_date($start_date)) {
+        $errors[] = ['field' => 'start_date', 'message' => 'Start Date is required'];
     }
-    if(!ec_valid_date($start_date) || !ec_valid_date($end_date)) {
-        $errors[] = 'Valid start and end dates are required';
-    } elseif($end_date < $start_date) {
-        $errors[] = 'End date cannot be before start date';
+    if(!ec_valid_date($end_date)) {
+        $errors[] = ['field' => 'end_date', 'message' => 'End Date is required'];
+    }
+    if(ec_valid_date($start_date) && ec_valid_date($end_date) && $end_date < $start_date) {
+        $errors[] = ['field' => 'end_date', 'message' => 'End Date cannot be before Start Date'];
     }
     if($total_pax < 0) {
-        $errors[] = 'Participant count cannot be negative';
+        $errors[] = ['field' => 'total_participants', 'message' => 'Total Expected Count cannot be negative'];
     }
+
+    // The chief guest block is marked required on the form; enforce it here too.
+    $guest_fields = [
+        'cg_name'        => 'Chief Guest Name',
+        'cg_designation' => 'Chief Guest Designation',
+        'cg_address'     => 'Chief Guest Address',
+        'cg_phone'       => 'Chief Guest Phone',
+        'cg_pan'         => 'Chief Guest PAN',
+        'cg_reason'      => 'Chief Guest Reason for Inviting',
+    ];
+    foreach($guest_fields as $field => $label) {
+        $require($field, $label, $_POST[$field] ?? '');
+    }
+
     if($errors) {
+        // Nothing has been written yet, so hand the form straight back with the
+        // failures highlighted and everything the convener typed still in place.
         http_response_code(400);
-        exit('Could not save proposal: ' . htmlspecialchars(implode('; ', $errors), ENT_QUOTES, 'UTF-8'));
+        $form_errors = $errors;
+        $old_input = $_POST;
+        require_once 'views/proposal.view.php';
+        exit;
     }
 
     // All six tables are written inside one transaction so a partial failure

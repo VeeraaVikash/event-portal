@@ -26,6 +26,24 @@ $prop_id_str = $is_editing ? sprintf('%04d', $_GET['id']) : '';
     <form id="proposalForm" action="proposal.php<?= $is_editing ? '?id=' . (int)$_GET['id'] : '' ?>" method="POST" class="space-y-8">
         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(ec_csrf_token(), ENT_QUOTES, 'UTF-8') ?>">
 
+<?php
+// Filled in by proposal.php when a POST fails validation; the client-side
+// validator rewrites the same panel before a submit is ever attempted.
+$error_list = $form_errors ?? [];
+$error_fields = array_column($error_list, 'field');
+?>
+        <div id="formErrors" role="alert" tabindex="-1" class="<?= $error_list ? '' : 'hidden ' ?>rounded-xl border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30 p-4 sm:p-5">
+            <p class="font-semibold text-red-800 dark:text-red-300 flex items-start gap-2">
+                <svg class="h-5 w-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                <span id="formErrorsTitle">Please fix <?= count($error_list) ?> <?= count($error_list) === 1 ? 'item' : 'items' ?> before submitting:</span>
+            </p>
+            <ul id="formErrorList" class="list-disc pl-11 mt-2 space-y-1 text-sm text-red-700 dark:text-red-300">
+                <?php foreach($error_list as $err): ?>
+                <li><?= htmlspecialchars($err['message'], ENT_QUOTES, 'UTF-8') ?></li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+
         <!-- 1. Convener Information (PREFILLED) -->
         <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-blue-100 dark:border-gray-700 p-6 sm:p-8 relative overflow-hidden transition-colors">
             <div class="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
@@ -62,20 +80,20 @@ $prop_id_str = $is_editing ? sprintf('%04d', $_GET['id']) : '';
             <div class="space-y-6">
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Event Title</label>
-                    <input type="text" name="title" required placeholder="Enter Event Title"
+                    <input type="text" name="title" data-label="Event Title" required placeholder="Enter Event Title"
                            class="w-full px-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 shadow-sm outline-none">
                 </div>
                 
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Event Description</label>
-                    <textarea name="description" required rows="3" placeholder="Provide a detailed description..."
+                    <textarea name="description" data-label="Event Description" required rows="3" placeholder="Provide a detailed description..."
                               class="w-full px-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 shadow-sm outline-none"></textarea>
                 </div>
                 
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Event Category</label>
-                        <select name="category" required class="w-full px-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-sm outline-none">
+                        <select name="category" data-label="Event Category" required class="w-full px-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-sm outline-none">
                             <option value="">Select Category</option>
                             <?php 
                             $cats = ["conference_national", "conference_international", "fdp", "workshop", "winter_summer_school", "mdp_pdp", "student_programme", "alumni_programme", "outreach_programme", "value_added_course", "association_activity", "counselling_activity", "commemoration_day", "upskilling_non_teaching", "industrial_conclave", "patent_commercialisation", "lecture_series_industry_expert"];
@@ -88,12 +106,12 @@ $prop_id_str = $is_editing ? sprintf('%04d', $_GET['id']) : '';
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Start Date</label>
-                        <input type="date" name="start_date" id="start_date" required onchange="calculateDuration()"
+                        <input type="date" name="start_date" data-label="Start Date" id="start_date" required onchange="calculateDuration()"
                                class="w-full px-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 overflow-hidden shadow-sm outline-none">
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">End Date</label>
-                        <input type="date" name="end_date" id="end_date" required onchange="calculateDuration()"
+                        <input type="date" name="end_date" data-label="End Date" id="end_date" required onchange="calculateDuration()"
                                class="w-full px-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 shadow-sm outline-none">
                     </div>
                 </div>
@@ -173,30 +191,30 @@ $prop_id_str = $is_editing ? sprintf('%04d', $_GET['id']) : '';
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name <span class="text-red-500">*</span></label>
-                        <input type="text" name="cg_name" required placeholder="Full Name" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                        <input type="text" name="cg_name" data-label="Chief Guest Name" required placeholder="Full Name" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Designation <span class="text-red-500">*</span></label>
-                        <input type="text" name="cg_designation" required placeholder="e.g. CEO, Example Corp" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                        <input type="text" name="cg_designation" data-label="Chief Guest Designation" required placeholder="e.g. CEO, Example Corp" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Address <span class="text-red-500">*</span></label>
-                    <input type="text" name="cg_address" required placeholder="Full Address" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                    <input type="text" name="cg_address" data-label="Chief Guest Address" required placeholder="Full Address" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                 </div>
                 
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Phone <span class="text-red-500">*</span></label>
-                        <input type="tel" name="cg_phone" required placeholder="Contact Number" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                        <input type="tel" name="cg_phone" data-label="Chief Guest Phone" required placeholder="Contact Number" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">PAN <span class="text-red-500">*</span></label>
-                        <input type="text" name="cg_pan" required placeholder="PAN Number" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                        <input type="text" name="cg_pan" data-label="Chief Guest PAN" required placeholder="PAN Number" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Reason for Inviting <span class="text-red-500">*</span></label>
-                        <input type="text" name="cg_reason" required placeholder="Brief reason" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                        <input type="text" name="cg_reason" data-label="Chief Guest Reason for Inviting" required placeholder="Brief reason" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                 </div>
 
@@ -364,7 +382,7 @@ $prop_id_str = $is_editing ? sprintf('%04d', $_GET['id']) : '';
 </main>
 
 <script>
-<?php if($is_editing && !empty($edit_data)): ?>
+<?php if($is_editing && !empty($edit_data) && empty($form_errors)): ?>
     document.addEventListener("DOMContentLoaded", () => {
         const d = <?= json_encode($edit_data) ?>;
         const setVal = (sel, val) => { const el = document.querySelector(sel); if(el && val) el.value = val; };
@@ -462,6 +480,43 @@ $prop_id_str = $is_editing ? sprintf('%04d', $_GET['id']) : '';
         }, 150);
     });
 <?php endif; ?>
+
+<?php if(!empty($old_input)): ?>
+    // The server rejected this POST, so put every answer back rather than
+    // handing the convener an empty form to retype.
+    document.addEventListener("DOMContentLoaded", () => {
+        const old = <?= json_encode(array_diff_key($old_input, ['csrf_token' => ''])) ?>;
+
+        document.querySelectorAll('#proposalForm [name]').forEach(el => {
+            const val = old[el.name.replace(/\[\]$/, '')];
+            if(val === undefined) return;
+            if(el.type === 'checkbox') el.checked = Array.isArray(val) ? val.includes(el.value) : val === el.value;
+            else if(el.type === 'radio') el.checked = (val === el.value);
+            else el.value = val;
+        });
+
+        const students = document.querySelector('input[name="part_categories[]"][value="Students"]');
+        if(students && students.checked) document.getElementById('studentCats').classList.remove('hidden');
+        calculateDuration();
+
+        // Same delay the edit prefill uses, so the empty starter rows are in place first.
+        setTimeout(() => {
+            try {
+                const b = JSON.parse(old.budget_json || '[]');
+                if(Array.isArray(b) && b.length > 0) {
+                    budgetItems = b.map(i => Object.assign({}, i, { id: budgetIdCounter++ }));
+                    renderBudgetTable();
+                }
+                const sp = JSON.parse(old.sponsor_json || '[]');
+                if(Array.isArray(sp) && sp.length > 0) {
+                    sponsorItems = sp.map(i => Object.assign({}, i, { id: sponsorIdCounter++ }));
+                    renderSponsorTable();
+                }
+            } catch(e) { /* malformed JSON: leave the starter rows alone */ }
+        }, 150);
+    });
+<?php endif; ?>
+
     // Initialize Flatpickr 
     document.addEventListener("DOMContentLoaded", () => {
         const isDark = document.documentElement.classList.contains('dark');
@@ -671,14 +726,103 @@ $prop_id_str = $is_editing ? sprintf('%04d', $_GET['id']) : '';
         addSponsorRow();
     });
 
+    // ----- VALIDATION -----
+    // reportValidity() only ever points at the first empty field, so the form
+    // collects every problem itself and lists them in the panel at the top.
+    const INVALID_CLASSES = ['border-red-500', 'ring-1', 'ring-red-500'];
+
+    function fieldLabel(el) {
+        // data-label wins where the visible label alone would be ambiguous
+        // ("Name" in the chief guest block, for instance).
+        if(el.dataset.label) return el.dataset.label;
+        const wrapper = el.closest('div');
+        const label = wrapper ? wrapper.querySelector('label') : null;
+        const text = label ? label.textContent : (el.placeholder || el.name);
+        return text.replace(/\*/g, '').replace(/\(optional\)/i, '').trim();
+    }
+
+    function markInvalid(el) { el.classList.add(...INVALID_CLASSES); }
+    function clearInvalid(el) { if(el.classList) el.classList.remove(...INVALID_CLASSES); }
+
+    function showFormErrors(messages, firstEl) {
+        const box = document.getElementById("formErrors");
+        const list = document.getElementById("formErrorList");
+        document.getElementById("formErrorsTitle").textContent =
+            "Please fix " + messages.length + (messages.length === 1 ? " item" : " items") + " before submitting:";
+        list.innerHTML = "";
+        messages.forEach(m => {
+            const li = document.createElement("li");
+            li.textContent = m;
+            list.appendChild(li);
+        });
+        box.classList.remove("hidden");
+        box.scrollIntoView({ behavior: "smooth", block: "center" });
+        if(firstEl) setTimeout(() => firstEl.focus({ preventScroll: true }), 400);
+    }
+
+    function collectFormErrors() {
+        const form = document.getElementById("proposalForm");
+        const messages = [];
+        let firstEl = null;
+
+        form.querySelectorAll("input, select, textarea").forEach(clearInvalid);
+
+        form.querySelectorAll("[required]").forEach(el => {
+            if(el.validity.valid) return;
+            const label = fieldLabel(el);
+            messages.push(el.validity.valueMissing ? label + " is required" : label + ": " + el.validationMessage);
+            markInvalid(el);
+            if(!firstEl) firstEl = el;
+        });
+
+        const s = document.getElementById("start_date");
+        const e = document.getElementById("end_date");
+        if(s.value && e.value && e.value < s.value) {
+            messages.push("End Date cannot be before Start Date");
+            markInvalid(e);
+            if(!firstEl) firstEl = e;
+        }
+
+        // A row that has been started needs the category its table marks required.
+        budgetItems.forEach((item, i) => {
+            if(!item.category && (item.cost > 0 || item.sub_category)) {
+                messages.push("Expense item " + (i + 1) + ": Category is required");
+            }
+        });
+        sponsorItems.forEach((item, i) => {
+            const started = item.amount > 0 || item.reward || item.mode || item.benefit || item.about;
+            if(started && !String(item.category).trim()) {
+                messages.push("Sponsor " + (i + 1) + ": Category is required");
+            }
+        });
+
+        return { messages, firstEl };
+    }
+
     function submitForm() {
-        if(!document.getElementById('proposalForm').checkValidity()) {
-            document.getElementById('proposalForm').reportValidity();
+        const { messages, firstEl } = collectFormErrors();
+        if(messages.length > 0) {
+            showFormErrors(messages, firstEl);
             return;
         }
+        document.getElementById("formErrors").classList.add("hidden");
         syncJSON();
         document.getElementById('proposalForm').submit();
     }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        const form = document.getElementById("proposalForm");
+        // Clear a field's red border as soon as it is being corrected.
+        form.addEventListener("input", ev => clearInvalid(ev.target));
+        form.addEventListener("change", ev => clearInvalid(ev.target));
+
+        // Fields the server rejected on the last POST.
+        const rejectedFields = <?= json_encode($error_fields ?? []) ?>;
+        rejectedFields.forEach(name => {
+            const el = form.querySelector('[name="' + name + '"]');
+            if(el) markInvalid(el);
+        });
+    });
 </script>
 
 <?php require 'partials/footer.php'; ?>

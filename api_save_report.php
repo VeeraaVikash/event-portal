@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/workflow.php';
 require_once 'includes/db.php';
+require_once 'includes/media.php';
 
 if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true){
     ec_json(["status" => "error", "message" => "Unauthorized"], 401);
@@ -25,18 +26,33 @@ if(!$prop_id) {
     exit;
 }
 
-// Ensure the proposal belongs to user
-$q = "SELECT status FROM proposals WHERE id = ? AND user_id = ?";
-$st = $conn->prepare($q);
-$st->bind_param("ii", $prop_id, $user_id);
-$st->execute();
-$res = $st->get_result();
+// Ensure the proposal belongs to the caller, and that a report is due.
+$proposal = ec_report_context($conn, $prop_id, (int) $user_id, (string) ($_SESSION["role"] ?? ''));
 
-if($res->num_rows === 0) {
+if(!$proposal || !$proposal['is_owner']) {
     ec_json(["status" => "error", "message" => "Proposal not found or unauthorized"], 404);
     exit;
 }
-$st->close();
+
+// The report covers what happened, so it cannot be filed before the event has.
+// The dashboard hides the button until then; this is the rule that enforces it.
+if(!ec_event_completed($proposal)) {
+    ec_json([
+        "status"  => "error",
+        "message" => "The event report can only be generated after the event has ended.",
+    ], 409);
+    exit;
+}
+
+// The report modal states that a generated report cannot be edited, so a
+// second generation is refused rather than silently replacing the first.
+if(ec_report_finalised($proposal)) {
+    ec_json([
+        "status"  => "error",
+        "message" => "A report has already been generated for this event.",
+    ], 409);
+    exit;
+}
 
 if(!isset($_FILES['report_pdf'])) {
     ec_json(["status" => "error", "message" => "No report file was received"], 400);
@@ -103,7 +119,7 @@ if(!move_uploaded_file($tmp, $path)) {
 // Record the path; if the DB write fails, remove the orphaned file so storage
 // and database stay consistent.
 try {
-    $uQ = "UPDATE proposals SET report_path = ? WHERE id = ? AND user_id = ?";
+    $uQ = "UPDATE proposals SET report_path = ?, report_generated_at = NOW() WHERE id = ? AND user_id = ?";
     $stU = $conn->prepare($uQ);
     $stU->bind_param("sii", $path, $prop_id, $user_id);
     $stU->execute();
