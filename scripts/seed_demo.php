@@ -11,6 +11,10 @@
  *                       proposal the "2 days before" reminder picks up
  *   ended 9 days ago    inside the "report overdue" reminder window
  *
+ * It then lays down a year of finished events across three conveners, most with
+ * a report filed and a recorded attendance, so the department analysis panel
+ * and the period archive have something real to show.
+ *
  * It also sets a known password on the two demo accounts, which is why it
  * demands --yes and refuses to run over the web. Never run this on a server
  * anyone else can reach - see "Known gaps" in README.md.
@@ -70,18 +74,31 @@ $conveperId = (int) $convener['id'];
 
 /* ------------------------------------------- clear any previous demo run */
 
-$stmt = $conn->prepare('SELECT id FROM proposals WHERE user_id = ? AND title LIKE ?');
+// Every demo proposal, whoever it belongs to - the history set is spread over
+// several conveners in the department.
+$stmt = $conn->prepare('SELECT id, report_path FROM proposals WHERE title LIKE ?');
 $like = DEMO_PREFIX . '%';
-$stmt->bind_param('is', $conveperId, $like);
+$stmt->bind_param('s', $like);
 $stmt->execute();
 $old = [];
 $res = $stmt->get_result();
 while ($row = $res->fetch_assoc()) {
-    $old[] = (int) $row['id'];
+    $old[(int) $row['id']] = (string) ($row['report_path'] ?? '');
 }
 $stmt->close();
 
-foreach ($old as $id) {
+foreach ($old as $id => $reportPath) {
+    // Demo report PDFs are seeded files, so they go with the proposal.
+    if ($reportPath !== '') {
+        $absReport = realpath(__DIR__ . '/../' . ltrim($reportPath, '/'));
+        $reportsRoot = realpath(__DIR__ . '/../reports');
+        if ($absReport && $reportsRoot
+            && strncmp($absReport, $reportsRoot . DIRECTORY_SEPARATOR, strlen($reportsRoot) + 1) === 0
+            && is_file($absReport)) {
+            @unlink($absReport);
+        }
+    }
+
     // Attachments first: the files on disk have no database cascade.
     foreach (ec_media_list($conn, $id) as $m) {
         $stmtM = $conn->prepare('SELECT stored_path FROM proposal_media WHERE id = ?');
@@ -160,7 +177,14 @@ $demos = [
 
 $created = [];
 
-foreach ($demos as $demo) {
+/**
+ * Writes one proposal and its child rows.
+ *
+ * $demo takes the same shape in both passes; the history pass adds 'attended',
+ * 'report' and 'budget_scale'.
+ */
+function demo_create(mysqli $conn, int $conveperId, array $demo): ?int
+{
     $start = date('Y-m-d', strtotime($demo['start']));
     $end   = date('Y-m-d', strtotime($demo['end']));
 
@@ -169,15 +193,17 @@ foreach ($demos as $demo) {
         $stmt = $conn->prepare(
             'INSERT INTO proposals
                (user_id, title, description, category, start_date, end_date,
-                total_expected_participants, participant_categories, student_categories,
-                status, hod_status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                total_expected_participants, actual_participants,
+                participant_categories, student_categories, status, hod_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
-        $status = 'Approved';
-        $stmt->bind_param('isssssissss',
+        $status   = $demo['status'] ?? 'Approved';
+        $hodStatus = ($status === 'Cancelled') ? 'Approved' : $status;
+        $attended = $demo['attended'] ?? null;
+        $stmt->bind_param('isssssiissss',
             $conveperId, $demo['title'], $demo['description'], $demo['category'],
-            $start, $end, $demo['pax'], $demo['audience'], $demo['student_cat'],
-            $status, $status);
+            $start, $end, $demo['pax'], $attended, $demo['audience'], $demo['student_cat'],
+            $status, $hodStatus);
         $stmt->execute();
         $proposalId = (int) $conn->insert_id;
         $stmt->close();
@@ -224,11 +250,12 @@ foreach ($demos as $demo) {
             'INSERT INTO proposal_budgets (proposal_id, item, category, type, quantity, cost_per_unit, total, amount)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
+        $scale = $demo['budget_scale'] ?? 1.0;
         $budget = [
-            ['Refreshments', 'Refreshments', 'Recurring', 3, 8000.00],
-            ['Certificates and printing', 'Printing', 'Recurring', 1, 8500.00],
-            ['Chief guest honorarium', 'Honorarium', 'Recurring', 2, 10000.00],
-            ['Stage backdrop and banners', 'Publicity', 'Non-Recurring', 1, 6500.00],
+            ['Refreshments', 'Refreshments', 'Recurring', 3, round(8000.00 * $scale, 2)],
+            ['Certificates and printing', 'Printing', 'Recurring', 1, round(8500.00 * $scale, 2)],
+            ['Chief guest honorarium', 'Honorarium', 'Recurring', 2, round(10000.00 * $scale, 2)],
+            ['Stage backdrop and banners', 'Publicity', 'Non-Recurring', 1, round(6500.00 * $scale, 2)],
         ];
         foreach ($budget as $b) {
             $total = $b[3] * $b[4];
@@ -266,14 +293,160 @@ foreach ($demos as $demo) {
         $stmt->close();
 
         $conn->commit();
-        $created[] = ['id' => $proposalId, 'title' => $demo['title'], 'note' => $demo['note'],
-                      'start' => $start, 'end' => $end];
-        printf("Created PRO-%04d  %s\n", $proposalId, $demo['note']);
+        return $proposalId;
     } catch (Throwable $e) {
         $conn->rollback();
         echo 'FAILED to create "' . $demo['title'] . '": ' . $e->getMessage() . "\n";
+        return null;
     }
 }
+
+foreach ($demos as $demo) {
+    $id = demo_create($conn, $conveperId, $demo);
+    if ($id !== null) {
+        $created[] = $id;
+        printf("Created PRO-%04d  %s\n", $id, $demo['note']);
+    }
+}
+
+/* ------------------------------------------------- a year of finished events */
+
+/** Writes a small but valid one-page PDF standing in for a filed report. */
+function demo_report_pdf(string $path, string $ref, string $title, string $when, int $attended): void
+{
+    $lines = [
+        'SRM Institute of Science and Technology',
+        'Department event report (seeded demo file)',
+        '',
+        'Reference : ' . $ref,
+        'Event     : ' . $title,
+        'Held      : ' . $when,
+        'Attended  : ' . $attended . ' participants',
+        '',
+        'This placeholder stands in for a report generated from the event',
+        'report workspace. Generate a real one to see the full layout.',
+    ];
+
+    $content = '';
+    $y = 780;
+    foreach ($lines as $i => $line) {
+        $size = $i === 0 ? 16 : 11;
+        $content .= "BT /F1 {$size} Tf 60 {$y} Td (" . str_replace(['(', ')'], ['\\(', '\\)'], $line) . ") Tj ET\n";
+        $y -= ($i === 0 ? 30 : 20);
+    }
+
+    $objects = [
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+        '<< /Length ' . strlen($content) . " >>\nstream\n" . $content . 'endstream',
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [];
+    foreach ($objects as $i => $body) {
+        $offsets[] = strlen($pdf);
+        $pdf .= ($i + 1) . " 0 obj\n" . $body . "\nendobj\n";
+    }
+    $xref = strlen($pdf);
+    $pdf .= 'xref' . "\n0 " . (count($objects) + 1) . "\n0000000000 65535 f \n";
+    foreach ($offsets as $off) {
+        $pdf .= sprintf("%010d 00000 n \n", $off);
+    }
+    $pdf .= "trailer\n<< /Size " . (count($objects) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF\n";
+
+    file_put_contents($path, $pdf);
+}
+
+// Other conveners in the same department, so "by faculty" has more than one row.
+$conveners = [$conveperId];
+$stmt = $conn->prepare(
+    "SELECT id FROM users WHERE department = ? AND LOWER(role) IN ('faculty','convener') AND id <> ? ORDER BY id"
+);
+$stmt->bind_param('si', $convener['department'], $conveperId);
+$stmt->execute();
+$res = $stmt->get_result();
+while ($row = $res->fetch_assoc()) {
+    $conveners[] = (int) $row['id'];
+}
+$stmt->close();
+
+/**
+ * [title, category, days ago the event ended, length in days, expected,
+ *  attended (null = never recorded), report filed?, budget scale, status]
+ */
+$history = [
+    ['Workshop on Cloud Native Development', 'workshop',              20,  2,  70,  64, true,  1.0,  'Approved'],
+    ['Guest Lecture: Semiconductor Careers', 'lecture_series_industry_expert', 34, 1, 120, 103, true, 0.5, 'Approved'],
+    ['Alumni Interaction Meet',              'alumni_programme',      48,  1, 200, 165, true,  0.8,  'Approved'],
+    ['Hackathon: Build for Bharat',          'student_programme',     62,  2, 250, 228, true,  1.6,  'Approved'],
+    ['FDP on Outcome Based Education',       'fdp',                   79,  5,  45,  41, true,  1.2,  'Approved'],
+    ['Value Added Course: Data Engineering', 'value_added_course',    96,  6,  60,  52, true,  0.9,  'Approved'],
+    ['Industry Conclave (Spring)',           'industrial_conclave',  118,  1, 180, null, true, 1.4,  'Approved'],
+    ['National Conference on Computing',     'conference_national',  140,  3, 300, 274, true,  2.4,  'Approved'],
+    ['Counselling Session for First Years',  'counselling_activity', 165,  1, 150, 141, false, 0.3,  'Approved'],
+    ['Outreach Programme at Govt School',    'outreach_programme',   190,  1,  90,  86, true,  0.6,  'Approved'],
+    ['Winter School on Robotics',            'winter_summer_school', 232,  5,  50,  44, true,  1.5,  'Approved'],
+    ['Upskilling for Non-Teaching Staff',    'upskilling_non_teaching', 268, 2, 35,  33, true,  0.4,  'Approved'],
+    ['MDP on Project Management',            'mdp_pdp',              300,  3,  40,  36, false, 1.1,  'Approved'],
+    ['Association Activity: Tech Quiz',      'association_activity', 330,  1, 110,  97, true,  0.2,  'Approved'],
+    ['Symposium that was called off',        'student_programme',     55,  1, 100, null, false, 0.7, 'Cancelled'],
+];
+
+$reportsDir = __DIR__ . '/../reports';
+if (!is_dir($reportsDir)) {
+    @mkdir($reportsDir, 0755, true);
+}
+
+$historyCount = 0;
+$filedCount = 0;
+
+foreach ($history as $i => [$title, $category, $endAgo, $length, $pax, $attended, $filed, $scale, $status]) {
+    $owner = $conveners[$i % count($conveners)];
+    $end   = '-' . $endAgo . ' days';
+    $start = '-' . ($endAgo + $length) . ' days';
+
+    $id = demo_create($conn, $owner, [
+        'title'        => DEMO_PREFIX . ' ' . $title,
+        'description'  => 'Seeded demo event, used to populate the department analysis and the period archive.',
+        'category'     => $category,
+        'start'        => $start,
+        'end'          => $end,
+        'pax'          => $pax,
+        'attended'     => $attended,
+        'audience'     => 'Students,Faculty',
+        'student_cat'  => null,
+        'status'       => $status,
+        'budget_scale' => $scale,
+    ]);
+
+    if ($id === null) {
+        continue;
+    }
+    $historyCount++;
+
+    if (!$filed) {
+        continue;
+    }
+
+    $ref      = 'PRO-' . sprintf('%04d', $id);
+    $endDate  = date('Y-m-d', strtotime($end));
+    $relative = 'reports/Report_' . str_replace('-', '_', $ref) . '_' . strtotime($end) . '.pdf';
+    demo_report_pdf(__DIR__ . '/../' . $relative, $ref, $title, $endDate, (int) ($attended ?? $pax));
+
+    $stmt = $conn->prepare(
+        'UPDATE proposals SET report_path = ?, report_generated_at = ? WHERE id = ?'
+    );
+    $generated = date('Y-m-d H:i:s', strtotime($end . ' +2 days'));
+    $stmt->bind_param('ssi', $relative, $generated, $id);
+    $stmt->execute();
+    $stmt->close();
+    $filedCount++;
+}
+
+printf("Created %d finished events across %d convener(s); %d have a report on file\n",
+    $historyCount, count($conveners), $filedCount);
 
 /* ---------------------------------------------------------- passwords */
 

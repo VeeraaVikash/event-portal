@@ -195,8 +195,8 @@ Three roles, resolved from `users.role` and stored in `$_SESSION['role']`:
 | Role | Dashboard | Can do |
 |---|---|---|
 | Convener (`faculty` / `Convener`) | `dashboard.php` | create, edit and resubmit own proposals; cancel; reschedule an approved event; print a pre-event draft; attach photographs, videos and documents and generate the post-event report; chat while under review |
-| HOD (`hod`) | `dashboard_hod.php` | approve, reject or request changes on proposals **from their own department**; chat while under review |
-| Coordinator (`coordinator`) | `dashboard_coordinator.php` | read-only monitoring of their department, CSV export, pre-approved event import |
+| HOD (`hod`) | `dashboard_hod.php` | approve, reject or request changes on proposals **from their own department**; chat while under review; department analysis and report archive |
+| Coordinator (`coordinator`) | `dashboard_coordinator.php` | read-only monitoring of their department, CSV export, pre-approved event import; department analysis and report archive |
 
 ### Proposal states
 
@@ -260,6 +260,12 @@ Event Report**, which opens the report workspace:
 | Videos | MP4, WebM, MOV, M4V | 100 MB | stored; linked from the annexure |
 | Documents & bills | PDF, Word, Excel, PowerPoint, TXT, CSV | 25 MB | stored; linked from the annexure |
 
+The workspace also asks how many participants actually attended. It is optional
+- leave it blank if no headcount was taken - and it is printed in the report
+beside the expected figure and used by the department analysis. Events reported
+before the field existed fall back to the expected count rather than counting as
+zero.
+
 Files upload as soon as they are chosen, so a report can be assembled over
 several sittings, and a 100 MB video is only ever sent once. **Preview & Print**
 builds the current state of the report without saving anything. **Generate &
@@ -309,6 +315,73 @@ post_max_size       = 110M
 
 A request larger than `post_max_size` arrives with everything stripped, which
 the upload endpoint detects and reports as **413** with an explanation.
+
+---
+
+## Department analysis and report archive
+
+HODs and coordinators get an analysis panel on their dashboard covering their
+own department - the same boundary that applies everywhere else in the app. A
+convener has no department-wide view; `api_analytics.php` and
+`download_report_archive.php` both return 403 for them.
+
+### Periods
+
+Past week, month, 2 months, 3 months, 6 months and year. An event belongs to a
+period by its **end date** - that is when it happened and when its report became
+due - and periods roll back from today rather than snapping to calendar months,
+so "past 3 months" on 13 September means 13 June onwards.
+
+Headline figures count only events that actually took place: approved, with an
+end date in the past. Cancelled and still-upcoming events appear in the event
+list and the status counts but are kept out of the totals.
+
+### What it shows
+
+| Figure | Meaning |
+|---|---|
+| Events held | approved events whose end date falls in the period |
+| Participants attended | recorded attendance, falling back to the expected count where none was entered, with the percentage against expected |
+| Budget | sum of the proposed budget lines for those events |
+| Reports filed | how many of them have a generated report, and how many are outstanding |
+
+Below that: events by month, events by category, and a per-faculty table ranked
+by event count - events, attendance, budget and reports filed versus
+outstanding for each convener in the department.
+
+### The archive
+
+The **Download ZIP** button hands the selected period to
+`download_report_archive.php`, so the file always matches what is on screen:
+
+```
+eventconnect-reports_Computing-Technologies_2025-09-13_to_2026-09-13.zip
+├── SUMMARY.txt     headline figures, by faculty, by category
+├── index.csv       one row per event: ref, title, convener, dates, status,
+│                   expected, attended, budget, report filed, report link
+├── analysis.csv    the same figures laid out for a spreadsheet
+└── reports/        PRO-0011_2026-08-24_Workshop-on-Cloud-Native.pdf, ...
+```
+
+Ticking **include photographs and documents** adds an `attachments/` folder per
+event. **Videos are never included** - one event can carry 100 MB of them, and a
+year's worth would be unusable as a download - so `index.csv` carries the link
+that serves each one instead.
+
+The archive stops at 512 MB. Anything left out is listed in a `NOTES.txt` inside
+the ZIP, along with any report the database references but that is missing from
+`reports/`.
+
+Both CSVs are written with a UTF-8 BOM, so Excel opens them with the right
+encoding instead of mangling names.
+
+### Temporary space
+
+The ZIP is assembled in a scratch file before being streamed. The first writable
+location of `sys_get_temp_dir()`, PHP's `upload_tmp_dir`, or `uploads/tmp` is
+used - on XAMPP for macOS the first of those resolves to the launching user's
+private temp directory, which the Apache user cannot write, so the fallback
+matters. If none is writable the download fails with a message naming all three.
 
 ---
 
@@ -606,6 +679,14 @@ php migrations/2026_09_13_report_media_and_reminders.php
 It is additive and idempotent in the same way, and it back-fills
 `report_generated_at` for reports that already exist so the "report overdue"
 reminder does not chase conveners who have already filed.
+
+`migrations/2026_09_13_actual_participants.php` adds
+`proposals.actual_participants`, the turnout the report workspace records and
+the department analysis reports on. One nullable column; same rules.
+
+```bash
+php migrations/2026_09_13_actual_participants.php
+```
 
 **Compatibility.** Purely additive and idempotent. Nothing is renamed, dropped
 or narrowed; every existing enum member (including the unused `Revision`) is

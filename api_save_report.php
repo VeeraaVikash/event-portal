@@ -26,6 +26,18 @@ if(!$prop_id) {
     exit;
 }
 
+// How many people actually turned up. Optional - a report generated before
+// this field existed simply has none - but bounded when supplied, since it
+// feeds the department analysis.
+$attended = null;
+if (isset($_POST['actual_participants']) && trim((string) $_POST['actual_participants']) !== '') {
+    $attended = (int) $_POST['actual_participants'];
+    if ($attended < 0 || $attended > 1000000) {
+        ec_json(["status" => "error", "message" => "Attendance must be between 0 and 1,000,000."], 400);
+        exit;
+    }
+}
+
 // Ensure the proposal belongs to the caller, and that a report is due.
 $proposal = ec_report_context($conn, $prop_id, (int) $user_id, (string) ($_SESSION["role"] ?? ''));
 
@@ -119,9 +131,11 @@ if(!move_uploaded_file($tmp, $path)) {
 // Record the path; if the DB write fails, remove the orphaned file so storage
 // and database stay consistent.
 try {
-    $uQ = "UPDATE proposals SET report_path = ?, report_generated_at = NOW() WHERE id = ? AND user_id = ?";
+    $uQ = "UPDATE proposals SET report_path = ?, report_generated_at = NOW(),
+                  actual_participants = COALESCE(?, actual_participants)
+            WHERE id = ? AND user_id = ?";
     $stU = $conn->prepare($uQ);
-    $stU->bind_param("sii", $path, $prop_id, $user_id);
+    $stU->bind_param("siii", $path, $attended, $prop_id, $user_id);
     $stU->execute();
     $stU->close();
     ec_json(["status" => "success", "report_path" => $path]);

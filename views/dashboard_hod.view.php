@@ -102,6 +102,8 @@ require 'partials/nav.php';
         </div>
     </div>
 
+    <?php require 'partials/analytics.php'; ?>
+
     <!-- Proposals List Table -->
     <div class="bg-white dark:bg-gray-800 shadow-sm border border-gray-100 dark:border-gray-700 rounded-xl overflow-hidden transition-colors duration-300">
         <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">

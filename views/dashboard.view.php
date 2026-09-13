@@ -786,6 +786,17 @@ require 'partials/nav.php';
         document: { label: 'Document',   plural: 'Documents',   limit: '25 MB each',  accept: '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv' }
     };
 
+    /** The attendance typed into the workspace, or null when left blank. */
+    function reportAttendance() {
+        const el = document.getElementById('reportAttendance');
+        const raw = el ? el.value.trim() : '';
+        if (raw === '') {
+            return (window.generatorPayload && window.generatorPayload.actual_participants) || null;
+        }
+        const n = parseInt(raw, 10);
+        return (isNaN(n) || n < 0) ? null : n;
+    }
+
     /** Escapes a value before it goes into the generated HTML. */
     function esc(value) {
         return String(value === null || value === undefined ? '' : value)
@@ -803,6 +814,11 @@ require 'partials/nav.php';
         if (!data) return;
 
         reportState.media = data.media || [];
+        const attendanceEl = document.getElementById('reportAttendance');
+        if (attendanceEl) {
+            attendanceEl.value = data.actual_participants ?? '';
+            attendanceEl.placeholder = 'e.g. ' + (data.total_expected_participants || 0) + ' were expected';
+        }
         document.getElementById('reportErrorBox').classList.add('hidden');
         document.getElementById('reportProgress').classList.add('hidden');
         document.getElementById('reportModalTitle').innerText =
@@ -1055,7 +1071,7 @@ require 'partials/nav.php';
                 </tr>
                 <tr>
                     <td style="padding: 4px 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Participants</td>
-                    <td style="padding: 4px 6px; border: 1px solid #ccc;" colspan="3"><b>Count:</b> ${esc(pData.total_expected_participants)} | <b>Target Audience:</b> ${esc(pData.participant_categories)}</td>
+                    <td style="padding: 4px 6px; border: 1px solid #ccc;" colspan="3"><b>Expected:</b> ${esc(pData.total_expected_participants)}${opts.attended ? ' | <b>Attended:</b> ' + esc(opts.attended) : ''} | <b>Target Audience:</b> ${esc(pData.participant_categories)}</td>
                 </tr>
                 <tr>
                     <td style="padding: 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Event Description</td>
@@ -1220,7 +1236,12 @@ require 'partials/nav.php';
         }
 
         status('Building PDF...');
-        const html = buildReportHtml(pData, { draft: opts.draft, annexure: others });
+        const html = buildReportHtml(pData, {
+            draft: opts.draft,
+            annexure: others,
+            // Only the post-event report carries a turnout; a draft predates it.
+            attended: opts.draft ? null : reportAttendance()
+        });
 
         const opt = {
             margin: 0.3,
@@ -1356,6 +1377,10 @@ require 'partials/nav.php';
             const form = new FormData();
             form.append('proposal_id', window.generatorPayload.id);
             form.append('report_pdf', pdf.output('blob'), 'report.pdf');
+            const attended = reportAttendance();
+            if (attended !== null) {
+                form.append('actual_participants', attended);
+            }
 
             const res = await fetch('api_save_report.php', { method: 'POST', body: form }).then(r => r.json());
 
@@ -1400,6 +1425,17 @@ require 'partials/nav.php';
 
         <div id="reportProgress"
             class="hidden mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300 text-xs rounded border border-blue-200 dark:border-blue-800 font-semibold flex items-center gap-2">
+        </div>
+
+        <div class="mb-5 p-3 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/20">
+            <label for="reportAttendance"
+                class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">How many participants attended?</label>
+            <input type="number" id="reportAttendance" min="0" max="1000000"
+                class="w-full sm:w-56 px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
+            <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+                Printed in the report next to the expected count, and used for the department analysis.
+                Leave blank if you did not take a headcount.
+            </p>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">

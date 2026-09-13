@@ -9,10 +9,8 @@
 --     CREATE DATABASE event CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 --     mysql -u <user> -p event < migrations/schema.sql
 --
--- This already reflects the changes made by both migrations
--- (2026_08_28_align_schema_with_app.php and
--- 2026_09_13_report_media_and_reminders.php), so a database created from this
--- file needs no migration. Run the migrations only on a pre-existing legacy
+-- This already reflects the changes made by every migration in this folder, so
+-- a database created from this file needs no migration. Run the migrations only on a pre-existing legacy
 -- database.
 --
 -- Contains structure only. No rows, and therefore no user data.
@@ -44,6 +42,7 @@ CREATE TABLE IF NOT EXISTS `proposals` (
   `past_events` text COLLATE utf8mb4_unicode_ci,
   `other_details` text COLLATE utf8mb4_unicode_ci,
   `total_expected_participants` int DEFAULT '0',
+  `actual_participants` int DEFAULT NULL,
   `participant_categories` text COLLATE utf8mb4_unicode_ci,
   `student_categories` text COLLATE utf8mb4_unicode_ci,
   `report_path` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
