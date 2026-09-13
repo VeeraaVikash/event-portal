@@ -9,6 +9,12 @@ if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true || strtoupper
 
 $user_id = $_SESSION["id"];
 
+// Catch-up sweep for deployments with no cron job. Throttled to once an hour
+// across all dashboards, and the mail itself is sent after the page has been
+// flushed, so nobody waits on SMTP. See scripts/send_reminders.php.
+require_once 'includes/reminders.php';
+ec_reminders_maybe_run($conn);
+
 // Get coordinator department
 $coordinator_department = null;
 $dept_query = "SELECT department FROM users WHERE id = ?";

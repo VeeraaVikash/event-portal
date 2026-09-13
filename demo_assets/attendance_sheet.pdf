@@ -1,0 +1,43 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 956 >>
+stream
+BT /F1 18 Tf 60 760 Td (DEMO - Attendance Sheet) Tj ET
+BT /F1 11 Tf 60 720 Td (National Workshop on Applied AI in Engineering) Tj ET
+BT /F1 11 Tf 60 698 Td (Department of Computing Technologies, SRMIST) Tj ET
+BT /F1 11 Tf 60 676 Td () Tj ET
+BT /F1 11 Tf 60 654 Td (S.No   Name                        Register No.     Signature) Tj ET
+BT /F1 11 Tf 60 632 Td (1      A. Karthik                  RA2211003010001  ..................) Tj ET
+BT /F1 11 Tf 60 610 Td (2      S. Meena                    RA2211003010002  ..................) Tj ET
+BT /F1 11 Tf 60 588 Td (3      R. Vignesh                  RA2211003010003  ..................) Tj ET
+BT /F1 11 Tf 60 566 Td (4      P. Lakshmi                  RA2211003010004  ..................) Tj ET
+BT /F1 11 Tf 60 544 Td (5      M. Arjun                    RA2211003010005  ..................) Tj ET
+BT /F1 11 Tf 60 522 Td () Tj ET
+BT /F1 11 Tf 60 500 Td (Total present: 78 of 80 registered participants.) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001247 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1317
+%%EOF

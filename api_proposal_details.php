@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once 'includes/db.php';
+require_once 'includes/media.php';
 
 if(!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true || !isset($_GET['id'])){
     http_response_code(403);
@@ -22,7 +23,9 @@ if ($role === 'HOD' || $role === 'COORDINATOR') {
     $dst->fetch();
     $dst->close();
 
-    $query = "SELECT p.*, pf.university_fund, pf.registration_fund, pf.sponsorship_fund, pf.other_sources 
+    $query = "SELECT p.*, pf.university_fund, pf.registration_fund, pf.sponsorship_fund, pf.other_sources,
+                     u.full_name AS convener_name, u.email AS convener_email,
+                     u.designation AS convener_designation, u.department AS convener_department
               FROM proposals p 
               LEFT JOIN proposal_financials pf ON p.id = pf.proposal_id 
               JOIN users u ON p.user_id = u.id 
@@ -30,9 +33,12 @@ if ($role === 'HOD' || $role === 'COORDINATOR') {
     $stmt = $conn->prepare($query);
     $stmt->bind_param("is", $id, $viewer_dept);
 } else {
-    $query = "SELECT p.*, pf.university_fund, pf.registration_fund, pf.sponsorship_fund, pf.other_sources 
+    $query = "SELECT p.*, pf.university_fund, pf.registration_fund, pf.sponsorship_fund, pf.other_sources,
+                     u.full_name AS convener_name, u.email AS convener_email,
+                     u.designation AS convener_designation, u.department AS convener_department
               FROM proposals p 
               LEFT JOIN proposal_financials pf ON p.id = pf.proposal_id 
+              JOIN users u ON p.user_id = u.id 
               WHERE p.id = ? AND p.user_id = ?";
     $stmt = $conn->prepare($query);
     $stmt->bind_param("ii", $id, $user_id);
@@ -75,6 +81,19 @@ if($result->num_rows > 0) {
     
     $proposal['messages'] = $messages;
     $proposal['my_id'] = $user_id;
+
+    // Report attachments, plus the two gates the dashboards use to decide which
+    // report buttons to show. Both are re-checked server-side by the endpoints
+    // that act on them; these flags only drive the UI.
+    $proposal['media']           = ec_media_list($conn, $id);
+    $proposal['is_completed']    = ec_event_completed($proposal);
+    $proposal['report_final']    = ec_report_finalised($proposal);
+    $is_owner                    = ((int) $proposal['user_id'] === (int) $user_id);
+    // Attachments and the final report: after the event, before it is filed.
+    $proposal['can_attach']      = $is_owner && $proposal['is_completed'] && !$proposal['report_final'];
+    // The pre-event draft: an approved proposal the convener can print for the
+    // HOD. Never stored on the server.
+    $proposal['can_draft']       = $is_owner && $proposal['status'] === 'Approved' && !$proposal['is_completed'];
 
     echo json_encode($proposal);
 } else {

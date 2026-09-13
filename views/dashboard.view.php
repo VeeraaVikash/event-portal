@@ -338,6 +338,7 @@ require 'partials/nav.php';
 
         document.getElementById('viewerGenerateReportBtn')?.classList.add('hidden');
         document.getElementById('viewerViewReportBtn')?.classList.add('hidden');
+        document.getElementById('viewerDraftBtn')?.classList.add('hidden');
 
         // Setup Chat strictly on Review Status
         if (status === 'Review') {
@@ -357,14 +358,23 @@ require 'partials/nav.php';
                 let badgeHTML = '';
                 let isCompleted = data.end_date && (new Date(data.end_date) < new Date()) && data.status === 'Approved';
 
+                // Everything the report workspace and the draft printer read.
+                window.generatorPayload = data;
+
+                // Before the event: an approved proposal can be printed for the
+                // HOD. That draft is never uploaded, so there is no server gate
+                // behind this button - can_draft is the whole rule.
+                const draftBtn = document.getElementById('viewerDraftBtn');
+                if (draftBtn && data.can_draft) { draftBtn.classList.remove('hidden'); }
+
                 // Mount Action Matrix securely matching explicit state bounds recursively
                 if (isCompleted) {
                     if (data.report_path) {
                         const vrt = document.getElementById('viewerViewReportBtn');
                         if (vrt) { vrt.href = 'download_report.php?id=' + id; vrt.classList.remove('hidden'); }
-                    } else {
+                    } else if (data.can_attach) {
                         const grt = document.getElementById('viewerGenerateReportBtn');
-                        if (grt) { grt.classList.remove('hidden'); window.generatorPayload = data; }
+                        if (grt) { grt.classList.remove('hidden'); }
                     }
                 } else {
                     if (data.status !== 'Cancelled') {
@@ -622,13 +632,22 @@ require 'partials/nav.php';
                     class="hidden px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm">
                     Cancel Event
                 </button>
+                <button id="viewerDraftBtn" onclick="printDraftReport(this)"
+                    class="hidden px-4 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-sm font-semibold rounded-lg transition-colors shadow-sm inline-flex items-center gap-1.5"
+                    title="Printable copy for the HOD. Not saved on the server.">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                    </svg>
+                    Print Draft
+                </button>
                 <button id="viewerGenerateReportBtn" onclick="openReportModal()"
                     class="hidden px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm inline-flex items-center gap-1.5">
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    Generate Report
+                    Create Event Report
                 </button>
                 <a id="viewerViewReportBtn" target="_blank" href="#"
                     class="hidden px-4 py-1.5 bg-indigo-100 hover:bg-indigo-200 border border-indigo-300 text-indigo-800 text-sm font-bold rounded-lg transition-colors shadow-sm inline-flex items-center gap-1.5">
@@ -745,133 +764,328 @@ require 'partials/nav.php';
         window.history.replaceState(null, '', window.location.pathname);
     }
 
-    // --- Report Generator Logic ---
+    // --- Event Report ---
+    //
+    // One builder, two modes:
+    //
+    //   draft  the event has not happened yet. The convener prints the approved
+    //          proposal for the HOD. Nothing is uploaded and nothing is stored.
+    //   final  the event is over. Photographs are embedded as pages, every
+    //          attachment is listed in an annexure, and the finished PDF is
+    //          stored on the server as the official report.
+    //
+    // A PDF cannot play a video and this generator cannot merge foreign
+    // documents, so videos and documents stay on the server: the annexure
+    // carries a QR code and a link to download_media.php for each one.
+
+    const reportState = { media: [], busy: false };
+
+    const REPORT_KINDS = {
+        photo:    { label: 'Photograph', plural: 'Photographs', limit: '10 MB each', accept: 'image/*' },
+        video:    { label: 'Video',      plural: 'Videos',      limit: '100 MB each', accept: 'video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v' },
+        document: { label: 'Document',   plural: 'Documents',   limit: '25 MB each',  accept: '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv' }
+    };
+
+    /** Escapes a value before it goes into the generated HTML. */
+    function esc(value) {
+        return String(value === null || value === undefined ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    /** A link that still works when it is scanned from a printed page. */
+    function absoluteUrl(path) {
+        return new URL(path, window.location.href).href;
+    }
+
     function openReportModal() {
+        const data = window.generatorPayload;
+        if (!data) return;
+
+        reportState.media = data.media || [];
         document.getElementById('reportErrorBox').classList.add('hidden');
-        document.getElementById('reportImageUpload').value = '';
-        document.getElementById('reportBillUpload').value = '';
+        document.getElementById('reportProgress').classList.add('hidden');
+        document.getElementById('reportModalTitle').innerText =
+            'Event Report - PRO-' + String(data.id).padStart(4, '0');
+        renderMediaList();
         document.getElementById('reportModal').classList.remove('hidden');
     }
 
     function closeReportModal() {
+        if (reportState.busy) return;
         document.getElementById('reportModal').classList.add('hidden');
     }
 
-    async function processReportGeneration() {
-        console.log("=== processReportGeneration START ===");
+    function showReportError(message) {
+        const box = document.getElementById('reportErrorBox');
+        box.innerText = message;
+        box.classList.remove('hidden');
+    }
 
-        if (!window.generatorPayload) {
-            console.error("ERROR: window.generatorPayload is null/undefined");
+    function setReportBusy(busy, message) {
+        reportState.busy = busy;
+        const progress = document.getElementById('reportProgress');
+        progress.innerText = message || '';
+        progress.classList.toggle('hidden', !busy);
+        document.querySelectorAll('.report-action').forEach(el => { el.disabled = busy; });
+    }
+
+    /** Redraws the attached-files list from reportState.media. */
+    function renderMediaList() {
+        const box = document.getElementById('reportMediaList');
+        const media = reportState.media || [];
+
+        if (media.length === 0) {
+            box.innerHTML = '<p class="text-xs text-gray-500 dark:text-gray-400 italic py-3 text-center">'
+                + 'No files attached yet. Photographs are printed inside the report; videos and documents are '
+                + 'stored and linked from its annexure.</p>';
             return;
         }
-        console.log("generatorPayload exists:", window.generatorPayload);
 
-        const btn = document.getElementById('reportGeneratePerformBtn');
-        btn.disabled = true;
-        btn.innerText = "Building PDF Base...";
-        console.log("Button disabled, text set to 'Building PDF Base...'");
+        const icons = {
+            photo: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z',
+            video: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z',
+            document: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'
+        };
 
-        const images = document.getElementById('reportImageUpload').files;
-        const bills = document.getElementById('reportBillUpload').files;
+        let html = '';
+        ['photo', 'video', 'document'].forEach(kind => {
+            const items = media.filter(m => m.kind === kind);
+            if (items.length === 0) return;
 
-        // Helper: Converts ANY image (including SVG) to a safe JPEG base64 and gets dimensions
-        const getSafeImageData = (file) => new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = (e) => {
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    // Cap resolution to avoid massive memory spikes while keeping A4 quality
-                    const MAX_DIM = 2000;
-                    let w = img.width;
-                    let h = img.height;
+            html += '<p class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mt-3 mb-1">'
+                + esc(REPORT_KINDS[kind].plural) + ' (' + items.length + ')</p>';
 
-                    if (w > MAX_DIM || h > MAX_DIM) {
-                        const ratio = w / h;
-                        if (w > h) { w = MAX_DIM; h = MAX_DIM / ratio; }
-                        else { h = MAX_DIM; w = MAX_DIM * ratio; }
-                    }
-
-                    canvas.width = w || 800; // fallback width
-                    canvas.height = h || 800; // fallback height
-                    const ctx = canvas.getContext('2d');
-
-                    // Fill white background (prevents transparent PNGs/SVGs turning black)
-                    ctx.fillStyle = "#ffffff";
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-                    resolve({
-                        base64: canvas.toDataURL('image/jpeg', 0.8),
-                        width: canvas.width,
-                        height: canvas.height
-                    });
-                };
-                img.onerror = reject;
-                img.src = e.target.result;
-            };
-            reader.onerror = reject;
+            items.forEach(m => {
+                html += '<div class="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 group">'
+                    + '<svg class="w-4 h-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">'
+                    + '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="' + icons[kind] + '"/></svg>'
+                    + '<a href="' + esc(m.url) + '" target="_blank" class="flex-grow text-xs text-gray-700 dark:text-gray-200 truncate hover:underline" title="' + esc(m.original_name) + '">'
+                    + esc(m.original_name) + '</a>'
+                    + '<span class="text-[10px] text-gray-400 flex-shrink-0">' + esc(m.size_human) + '</span>'
+                    + '<button type="button" onclick="deleteMedia(' + m.id + ')" title="Remove"'
+                    + ' class="report-action opacity-0 group-hover:opacity-100 focus:opacity-100 text-red-500 hover:text-red-700 transition p-1 disabled:opacity-30">'
+                    + '<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">'
+                    + '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>'
+                    + '</button></div>';
+            });
         });
 
-        const pData = window.generatorPayload;
+        box.innerHTML = html;
+    }
 
-        // Build HTML for text and tables ONLY. No images here.
-        let htmlBlock = `
+    /**
+     * Uploads the chosen files straight away.
+     *
+     * Attachments live on the server rather than only in the browser, so the
+     * convener can collect them over several sittings and a 100 MB video is
+     * only ever sent once. XMLHttpRequest rather than fetch, for the progress
+     * readout - which means setting the CSRF header by hand.
+     */
+    function uploadMedia(kind, input) {
+        const data = window.generatorPayload;
+        if (!data || input.files.length === 0) return;
+
+        const files = Array.from(input.files);
+        const form = new FormData();
+        form.append('proposal_id', data.id);
+        form.append('kind', kind);
+        files.forEach(f => form.append('files[]', f));
+
+        document.getElementById('reportErrorBox').classList.add('hidden');
+        setReportBusy(true, 'Uploading ' + files.length + ' ' + (files.length === 1 ? 'file' : 'files') + '...');
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', 'api_upload_media.php');
+        xhr.setRequestHeader('X-CSRF-Token', window.EC_CSRF);
+
+        xhr.upload.onprogress = (e) => {
+            if (!e.lengthComputable) return;
+            const pct = Math.round((e.loaded / e.total) * 100);
+            setReportBusy(true, 'Uploading... ' + pct + '%');
+        };
+
+        xhr.onload = () => {
+            input.value = '';
+            setReportBusy(false, '');
+            let res = {};
+            try { res = JSON.parse(xhr.responseText); } catch (e) { /* handled below */ }
+
+            if (res.media) {
+                reportState.media = res.media;
+                window.generatorPayload.media = res.media;
+                renderMediaList();
+            }
+            if (res.status !== 'success') {
+                showReportError(res.message || 'The upload was rejected by the server.');
+            } else if (res.message) {
+                // Some files landed, some did not.
+                showReportError(res.message);
+            }
+        };
+
+        xhr.onerror = () => {
+            input.value = '';
+            setReportBusy(false, '');
+            showReportError('The upload could not reach the server. Check your connection and try again.');
+        };
+
+        xhr.send(form);
+    }
+
+    async function deleteMedia(mediaId) {
+        if (!confirm('Remove this attachment from the report?')) return;
+
+        setReportBusy(true, 'Removing...');
+        try {
+            const res = await fetch('api_delete_media.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ media_id: mediaId })
+            }).then(r => r.json());
+
+            if (res.media) {
+                reportState.media = res.media;
+                window.generatorPayload.media = res.media;
+                renderMediaList();
+            }
+            if (res.status !== 'success') {
+                showReportError(res.message || 'The attachment could not be removed.');
+            }
+        } catch (err) {
+            showReportError('The attachment could not be removed: ' + err.message);
+        } finally {
+            setReportBusy(false, '');
+        }
+    }
+
+    // Converts any image - a File, or a blob pulled back from the server - into
+    // a JPEG data URL the PDF can take, capping the resolution so a phone photo
+    // does not blow up memory.
+    const getSafeImageData = (blob) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const MAX_DIM = 2000;
+                let w = img.width;
+                let h = img.height;
+
+                if (w > MAX_DIM || h > MAX_DIM) {
+                    const ratio = w / h;
+                    if (w > h) { w = MAX_DIM; h = MAX_DIM / ratio; }
+                    else { h = MAX_DIM; w = MAX_DIM * ratio; }
+                }
+
+                canvas.width = w || 800;
+                canvas.height = h || 800;
+                const ctx = canvas.getContext('2d');
+
+                // White ground, so transparent PNGs do not print black.
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                resolve({ base64: canvas.toDataURL('image/jpeg', 0.8), width: canvas.width, height: canvas.height });
+            };
+            img.onerror = reject;
+            img.src = e.target.result;
+        };
+        reader.onerror = reject;
+    });
+
+    /** A QR code for the annexure, or '' when the library did not load. */
+    function qrDataUrl(text) {
+        if (typeof qrcode === 'undefined') return '';
+        try {
+            // 0 = pick the smallest symbol that fits, 'M' = medium correction,
+            // which survives a printed page being scanned off a phone camera.
+            const qr = qrcode(0, 'M');
+            qr.addData(text);
+            qr.make();
+            return qr.createDataURL(4, 1);
+        } catch (err) {
+            return '';
+        }
+    }
+
+    /** The text and tables of the report. Images are added afterwards. */
+    function buildReportHtml(pData, opts) {
+        const draft = opts.draft;
+        const annexure = opts.annexure || [];
+
+        let html = `
         <div style="font-family: Arial, sans-serif; font-size: 11px; padding: 20px; color: #333; margin: 0;">
             <div style="text-align: center; border-bottom: 2px solid #004289; padding-bottom: 10px; margin-bottom: 15px;">
                 <h1 style="color: #004289; margin: 0; font-size: 18px; text-transform: uppercase; letter-spacing: 1px;">SRM Institute of Science and Technology</h1>
                 <h2 style="color: #444; margin: 3px 0 0; font-size: 14px;">Faculty of Engineering and Technology</h2>
-                <h3 style="color: #666; margin: 3px 0 0; font-size: 12px;">Department of Computing Technologies</h3>
-                <h4 style="color: #333; margin: 10px 0 0; font-size: 16px; text-decoration: underline;">EVENT REPORT</h4>
-            </div>
+                <h3 style="color: #666; margin: 3px 0 0; font-size: 12px;">${esc(pData.convener_department ? 'Department of ' + pData.convener_department : 'Department of Computing Technologies')}</h3>
+                <h4 style="color: #333; margin: 10px 0 0; font-size: 16px; text-decoration: underline;">${draft ? 'EVENT REPORT (DRAFT)' : 'EVENT REPORT'}</h4>
+            </div>`;
 
+        if (draft) {
+            html += `
+            <div style="border: 1px solid #b45309; background: #fffbeb; color: #92400e; padding: 6px 10px; margin-bottom: 15px; font-size: 10px;">
+                <b>DRAFT - for approval circulation only.</b> Prepared on ${esc(new Date().toLocaleDateString('en-GB'))}, before the event took place.
+                It is not stored on the server. The official post-event report is generated after ${esc(new Date(pData.end_date).toLocaleDateString('en-GB'))}.
+            </div>`;
+        }
+
+        html += `
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
                 <tr>
                     <td style="padding: 4px 6px; font-weight: bold; width: 15%; border: 1px solid #ccc; background: #f9f9f9;">Event Title</td>
-                    <td style="padding: 4px 6px; width: 35%; border: 1px solid #ccc;">${pData.title}</td>
+                    <td style="padding: 4px 6px; width: 35%; border: 1px solid #ccc;">${esc(pData.title)}</td>
                     <td style="padding: 4px 6px; font-weight: bold; width: 15%; border: 1px solid #ccc; background: #f9f9f9;">Reference ID</td>
                     <td style="padding: 4px 6px; width: 35%; border: 1px solid #ccc;">PRO-${String(pData.id).padStart(4, '0')}</td>
                 </tr>
                 <tr>
                     <td style="padding: 4px 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Dates</td>
-                    <td style="padding: 4px 6px; border: 1px solid #ccc;">${new Date(pData.start_date).toLocaleDateString()} to ${new Date(pData.end_date).toLocaleDateString()}</td>
+                    <td style="padding: 4px 6px; border: 1px solid #ccc;">${esc(new Date(pData.start_date).toLocaleDateString())} to ${esc(new Date(pData.end_date).toLocaleDateString())}</td>
                     <td style="padding: 4px 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Category</td>
-                    <td style="padding: 4px 6px; border: 1px solid #ccc; text-transform: capitalize;">${pData.category.replace(/_/g, ' ')}</td>
+                    <td style="padding: 4px 6px; border: 1px solid #ccc; text-transform: capitalize;">${esc(String(pData.category || '').replace(/_/g, ' '))}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 4px 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Convener</td>
+                    <td style="padding: 4px 6px; border: 1px solid #ccc;">${esc(pData.convener_name || 'Not recorded')}${pData.convener_designation ? '<br/><span style="font-size: 9px; color: #555;">' + esc(pData.convener_designation) + '</span>' : ''}</td>
+                    <td style="padding: 4px 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Contact</td>
+                    <td style="padding: 4px 6px; border: 1px solid #ccc;">${esc(pData.convener_email || '-')}</td>
                 </tr>
                 <tr>
                     <td style="padding: 4px 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Participants</td>
-                    <td style="padding: 4px 6px; border: 1px solid #ccc;" colspan="3"><b>Count:</b> ${pData.total_expected_participants} | <b>Target Audience:</b> ${pData.participant_categories}</td>
+                    <td style="padding: 4px 6px; border: 1px solid #ccc;" colspan="3"><b>Count:</b> ${esc(pData.total_expected_participants)} | <b>Target Audience:</b> ${esc(pData.participant_categories)}</td>
                 </tr>
                 <tr>
                     <td style="padding: 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Event Description</td>
-                    <td style="padding: 6px; border: 1px solid #ccc; text-align: justify;" colspan="3">${pData.description}</td>
+                    <td style="padding: 6px; border: 1px solid #ccc; text-align: justify;" colspan="3">${esc(pData.description)}</td>
                 </tr>
             </table>
         `;
 
         if (pData.guests && pData.guests.length > 0) {
-            htmlBlock += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Chief Guests / Experts</h3>
+            html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Chief Guests / Experts</h3>
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px;">
             <tr>
                 <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">Name</th>
-                <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">Designation & Address</th>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">Designation &amp; Address</th>
                 <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">Phone</th>
                 <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">Reason for Inviting</th>
             </tr>`;
             pData.guests.forEach(g => {
-                htmlBlock += `<tr>
-                <td style="border: 1px solid #ccc; padding: 4px;"><b>${g.name}</b></td>
-                <td style="border: 1px solid #ccc; padding: 4px;">${g.designation}<br/>${g.address}</td>
-                <td style="border: 1px solid #ccc; padding: 4px;">${g.contact_number}</td>
-                <td style="border: 1px solid #ccc; padding: 4px;">${g.reason}</td>
+                html += `<tr>
+                <td style="border: 1px solid #ccc; padding: 4px;"><b>${esc(g.name)}</b></td>
+                <td style="border: 1px solid #ccc; padding: 4px;">${esc(g.designation)}<br/>${esc(g.address)}</td>
+                <td style="border: 1px solid #ccc; padding: 4px;">${esc(g.contact_number)}</td>
+                <td style="border: 1px solid #ccc; padding: 4px;">${esc(g.reason)}</td>
             </tr>`;
             });
-            htmlBlock += `</table>`;
+            html += `</table>`;
         }
 
         if (pData.travel && pData.travel.length > 0) {
-            htmlBlock += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Travel & Accommodation</h3>
+            html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Travel &amp; Accommodation</h3>
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px;">
             <tr>
                 <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">Logistics Type</th>
@@ -880,25 +1094,25 @@ require 'partials/nav.php';
             </tr>`;
             pData.travel.forEach(t => {
                 if (t.hotel_name_address) {
-                    htmlBlock += `<tr>
-                    <td style="border: 1px solid #ccc; padding: 4px;"><b>Accommodation</b> (${t.accommodation_days} Days)</td>
-                    <td style="border: 1px solid #ccc; padding: 4px;">Hotel: ${t.hotel_name_address}</td>
-                    <td style="border: 1px solid #ccc; padding: 4px;">${t.who_arranges}</td>
+                    html += `<tr>
+                    <td style="border: 1px solid #ccc; padding: 4px;"><b>Accommodation</b> (${esc(t.accommodation_days)} Days)</td>
+                    <td style="border: 1px solid #ccc; padding: 4px;">Hotel: ${esc(t.hotel_name_address)}</td>
+                    <td style="border: 1px solid #ccc; padding: 4px;">${esc(t.who_arranges)}</td>
                 </tr>`;
                 } else if (t.mode) {
-                    htmlBlock += `<tr>
-                    <td style="border: 1px solid #ccc; padding: 4px;"><b>Travel</b> (${t.mode}) - ${t.number_of_trips} Trips</td>
-                    <td style="border: 1px solid #ccc; padding: 4px;">Locations: ${t.travel_address}</td>
-                    <td style="border: 1px solid #ccc; padding: 4px;">${t.who_provides}</td>
+                    html += `<tr>
+                    <td style="border: 1px solid #ccc; padding: 4px;"><b>Travel</b> (${esc(t.mode)}) - ${esc(t.number_of_trips)} Trips</td>
+                    <td style="border: 1px solid #ccc; padding: 4px;">Locations: ${esc(t.travel_address)}</td>
+                    <td style="border: 1px solid #ccc; padding: 4px;">${esc(t.who_provides)}</td>
                 </tr>`;
                 }
             });
-            htmlBlock += `</table>`;
+            html += `</table>`;
         }
 
         if (pData.budgets && pData.budgets.length > 0) {
             let bTotal = 0;
-            htmlBlock += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Proposed Budget Breakdown</h3>
+            html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Proposed Budget Breakdown</h3>
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px;">
             <tr>
                 <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">Category</th>
@@ -909,21 +1123,21 @@ require 'partials/nav.php';
             </tr>`;
             pData.budgets.forEach(b => {
                 bTotal += parseFloat(b.total || 0);
-                htmlBlock += `<tr>
-                <td style="border: 1px solid #ccc; padding: 4px;"><b>${b.category}</b></td>
-                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${b.type}</td>
-                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${b.quantity}</td>
+                html += `<tr>
+                <td style="border: 1px solid #ccc; padding: 4px;"><b>${esc(b.category)}</b></td>
+                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${esc(b.type)}</td>
+                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${esc(b.quantity)}</td>
                 <td style="border: 1px solid #ccc; padding: 4px; text-align: right;">${parseFloat(b.cost_per_unit).toLocaleString('en-IN')}</td>
                 <td style="border: 1px solid #ccc; padding: 4px; text-align: right; font-weight: bold;">${parseFloat(b.total).toLocaleString('en-IN')}</td>
             </tr>`;
             });
-            htmlBlock += `<tr>
+            html += `<tr>
             <td colspan="4" style="border: 1px solid #ccc; padding: 4px; text-align: right; background: #f0f8ff;"><b>GRAND TOTAL</b></td>
             <td style="border: 1px solid #ccc; padding: 4px; text-align: right; background: #f0f8ff; font-weight: bold; color: #004289;">₹${bTotal.toLocaleString('en-IN')}</td>
         </tr></table>`;
         }
 
-        htmlBlock += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Funding Sources</h3>
+        html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Funding Sources</h3>
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 10px;">
         <tr>
             <td style="border: 1px solid #ccc; padding: 4px; background: #f9f9f9;"><b>University Fund</b></td>
@@ -937,12 +1151,43 @@ require 'partials/nav.php';
             <td style="border: 1px solid #ccc; padding: 4px; background: #f9f9f9;"><b>Other Sources</b></td>
             <td style="border: 1px solid #ccc; padding: 4px;">₹${parseFloat(pData.other_sources || 0).toLocaleString('en-IN')}</td>
         </tr>
-        </table>
-        
+        </table>`;
+
+        // Annexure: what the PDF itself cannot carry.
+        if (annexure.length > 0) {
+            html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Annexure - Supporting Material</h3>
+            <p style="font-size: 9px; color: #666; margin: 0 0 6px;">Held with the event record. Scan the code or open the link while signed in to SRM Event Connect.</p>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 10px;">
+            <tr>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee; width: 5%;">#</th>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee; width: 13%;">Type</th>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">File</th>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee; width: 12%;">Size</th>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee; width: 20%; text-align: center;">Scan to open</th>
+            </tr>`;
+            annexure.forEach((m, i) => {
+                const link = absoluteUrl(m.url);
+                const qr = m.qr
+                    ? `<img src="${m.qr}" style="width: 70px; height: 70px;" />`
+                    : '<span style="font-size: 8px; color: #888;">see link</span>';
+                html += `<tr>
+                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${i + 1}</td>
+                <td style="border: 1px solid #ccc; padding: 4px;">${esc(REPORT_KINDS[m.kind] ? REPORT_KINDS[m.kind].label : m.kind)}</td>
+                <td style="border: 1px solid #ccc; padding: 4px; word-break: break-all;"><b>${esc(m.original_name)}</b><br/>
+                    <span style="font-size: 8px; color: #555;">${esc(link)}</span></td>
+                <td style="border: 1px solid #ccc; padding: 4px;">${esc(m.size_human)}</td>
+                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${qr}</td>
+            </tr>`;
+            });
+            html += `</table>`;
+        }
+
+        html += `
         <div style="margin-top: 50px; display: flex; justify-content: space-between; page-break-inside: avoid; padding: 0 40px;">
             <div style="text-align: center; width: 220px;">
                 <hr style="border: 0; border-bottom: 1.5px solid #000; margin-bottom: 10px;" />
                 <span style="font-weight: bold; font-size: 13px;">Convener Signature</span>
+                ${pData.convener_name ? `<br/><span style="font-size: 10px; color: #555;">${esc(pData.convener_name)}</span>` : ''}
             </div>
             <div style="text-align: center; width: 220px;">
                 <hr style="border: 0; border-bottom: 1.5px solid #000; margin-bottom: 10px;" />
@@ -951,157 +1196,270 @@ require 'partials/nav.php';
         </div>
         </div>`;
 
+        return html;
+    }
+
+    /**
+     * Builds the PDF and hands back the jsPDF instance, so the caller can print
+     * it, save it, or upload it.
+     *
+     * @param opts.draft    pre-event copy: no attachments, no annexure
+     * @param opts.onStatus progress callback for the button label
+     */
+    async function buildReportPdf(opts) {
+        const pData = window.generatorPayload;
+        const status = opts.onStatus || function () {};
+        const media = opts.draft ? [] : (reportState.media || []);
+        const photos = media.filter(m => m.kind === 'photo');
+        const others = media.filter(m => m.kind !== 'photo');
+
+        // QR codes have to exist before the HTML that embeds them is built.
+        if (others.length > 0) {
+            status('Preparing annexure...');
+            others.forEach(m => { m.qr = qrDataUrl(absoluteUrl(m.url)); });
+        }
+
+        status('Building PDF...');
+        const html = buildReportHtml(pData, { draft: opts.draft, annexure: others });
+
         const opt = {
             margin: 0.3,
             filename: 'report.pdf',
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, scrollY: 0 }, // Set to 2 for sharper text
+            html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
             jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' },
             pagebreak: { mode: ['css', 'legacy'] }
         };
 
-        try {
-            // Step 1: Render the text/tables via html2pdf, but intercept before saving
-            let worker = html2pdf().set(opt).from(htmlBlock).toPdf();
+        const pdf = await html2pdf().set(opt).from(html).toPdf().get('pdf');
 
-            // Step 2: Hook into the jsPDF instance and manually draw images on new pages
-            worker = worker.get('pdf').then(async function (pdf) {
-                const pageWidth = pdf.internal.pageSize.getWidth();
-                const pageHeight = pdf.internal.pageSize.getHeight();
-                const margin = 0.3;
-                const maxImgWidth = pageWidth - (margin * 2);
-                const maxImgHeight = pageHeight - (margin * 2) - 0.5; // Leave space for headers
+        // Photographs go on their own pages, drawn straight onto the document -
+        // html2canvas would rasterise them a second time and lose quality.
+        if (photos.length > 0) {
+            const pageWidth = pdf.internal.pageSize.getWidth();
+            const pageHeight = pdf.internal.pageSize.getHeight();
+            const margin = 0.3;
+            const maxImgWidth = pageWidth - (margin * 2);
+            const maxImgHeight = pageHeight - (margin * 2) - 0.5;
 
-                const addImagesToPDF = async (fileList, titlePrefix) => {
-                    for (let i = 0; i < fileList.length; i++) {
-                        btn.innerText = `Attaching ${titlePrefix} ${i + 1}/${fileList.length}...`;
-                        console.log(`Processing ${titlePrefix} ${i + 1}: ${fileList[i].name}`);
+            for (let i = 0; i < photos.length; i++) {
+                status('Attaching photograph ' + (i + 1) + ' of ' + photos.length + '...');
+                try {
+                    const response = await fetch(photos[i].url);
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    const imgData = await getSafeImageData(await response.blob());
 
-                        try {
-                            const imgData = await getSafeImageData(fileList[i]);
-
-                            // Calculate aspect ratio to fit the page natively
-                            const ratio = imgData.width / imgData.height;
-                            let renderWidth = maxImgWidth;
-                            let renderHeight = maxImgWidth / ratio;
-
-                            if (renderHeight > maxImgHeight) {
-                                renderHeight = maxImgHeight;
-                                renderWidth = maxImgHeight * ratio;
-                            }
-
-                            // Center horizontally
-                            const xPos = (pageWidth - renderWidth) / 2;
-
-                            // Create a new page and inject
-                            pdf.addPage();
-                            pdf.setFontSize(11);
-                            pdf.setTextColor(80);
-                            pdf.text(`${titlePrefix} ${i + 1} of ${fileList.length}`, margin, margin + 0.2);
-
-                            // Natively stamp the image
-                            pdf.addImage(imgData.base64, 'JPEG', xPos, margin + 0.5, renderWidth, renderHeight);
-                        } catch (err) {
-                            console.error(`Failed to process image ${fileList[i].name}`, err);
-                        }
+                    const ratio = imgData.width / imgData.height;
+                    let renderWidth = maxImgWidth;
+                    let renderHeight = maxImgWidth / ratio;
+                    if (renderHeight > maxImgHeight) {
+                        renderHeight = maxImgHeight;
+                        renderWidth = maxImgHeight * ratio;
                     }
-                };
 
-                if (bills.length > 0) await addImagesToPDF(bills, "Bill / Receipt");
-                if (images.length > 0) await addImagesToPDF(images, "Event Photograph");
-
-                return pdf;
-            });
-
-            // Step 3: Finalize and send to server
-            worker.output('blob').then(function (pdfBlob) {
-                console.log("Final combined PDF blob size:", pdfBlob.size, "bytes");
-
-                const formData = new FormData();
-                formData.append('proposal_id', pData.id);
-                formData.append('report_pdf', pdfBlob, 'report.pdf');
-
-                btn.innerText = "Saving securely natively...";
-                console.log("Sending to server...");
-
-                fetch('api_save_report.php', { method: 'POST', body: formData })
-                    .then(res => res.json())
-                    .then(res => {
-                        console.log("Server response:", res);
-                        if (res.status === 'success') {
-                            window.location.href = 'dashboard.php?alert=Report%20Generated%20and%20Linked%20Successfully';
-                        } else {
-                            document.getElementById('reportErrorBox').innerText = res.message;
-                            document.getElementById('reportErrorBox').classList.remove('hidden');
-                            btn.innerText = "Generate Report";
-                            btn.disabled = false;
-                        }
-                    })
-                    .catch(err => {
-                        console.error("Fetch error:", err);
-                        document.getElementById('reportErrorBox').innerText = "Network transmission fault storing PDF Blob natively.";
-                        document.getElementById('reportErrorBox').classList.remove('hidden');
-                        btn.innerText = "Generate Report";
-                        btn.disabled = false;
-                    });
-            });
-
-        } catch (err) {
-            console.error("PDF engine ERROR:", err);
-            document.getElementById('reportErrorBox').innerText = "PDF rendering failed: " + err.message;
-            document.getElementById('reportErrorBox').classList.remove('hidden');
-            btn.innerText = "Generate Report";
-            btn.disabled = false;
+                    pdf.addPage();
+                    pdf.setFontSize(11);
+                    pdf.setTextColor(80);
+                    pdf.text('Photograph ' + (i + 1) + ' of ' + photos.length + ' - ' + photos[i].original_name,
+                        margin, margin + 0.2);
+                    pdf.addImage(imgData.base64, 'JPEG', (pageWidth - renderWidth) / 2, margin + 0.5, renderWidth, renderHeight);
+                } catch (err) {
+                    // One unreadable photograph must not cost the whole report.
+                    console.error('Could not attach ' + photos[i].original_name, err);
+                    pdf.addPage();
+                    pdf.setFontSize(11);
+                    pdf.setTextColor(150);
+                    pdf.text('Photograph ' + (i + 1) + ' (' + photos[i].original_name + ') could not be rendered.',
+                        margin, margin + 0.5);
+                }
+            }
         }
 
-        console.log("=== processReportGeneration END ===");
+        return pdf;
+    }
+
+    /**
+     * Shows a finished PDF in a new tab, where the browser's own viewer offers
+     * printing and saving. The tab is opened on the click itself - opening it
+     * after the await would be caught by the popup blocker.
+     */
+    function showPdfInTab(tab, pdf) {
+        const url = URL.createObjectURL(pdf.output('blob'));
+        if (tab) {
+            tab.location.href = url;
+        } else {
+            window.open(url, '_blank');
+        }
+        // Give the viewer time to load before the blob is released.
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+
+    /** Pre-event copy for the HOD. Generated in the browser, never uploaded. */
+    async function printDraftReport(btn) {
+        if (!window.generatorPayload) return;
+
+        const tab = window.open('', '_blank');
+        const original = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerText = 'Building...';
+
+        try {
+            const pdf = await buildReportPdf({ draft: true, onStatus: (m) => { btn.innerText = m; } });
+            showPdfInTab(tab, pdf);
+        } catch (err) {
+            console.error('Draft generation failed', err);
+            if (tab) tab.close();
+            alert('The draft could not be generated: ' + err.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = original;
+        }
+    }
+
+    /** Post-event report, with attachments, shown for checking and printing. */
+    async function previewReport() {
+        const tab = window.open('', '_blank');
+        document.getElementById('reportErrorBox').classList.add('hidden');
+        setReportBusy(true, 'Building preview...');
+        try {
+            const pdf = await buildReportPdf({ draft: false, onStatus: (m) => setReportBusy(true, m) });
+            showPdfInTab(tab, pdf);
+        } catch (err) {
+            console.error('Preview failed', err);
+            if (tab) tab.close();
+            showReportError('The preview could not be generated: ' + err.message);
+        } finally {
+            setReportBusy(false, '');
+        }
+    }
+
+    /** Builds the final report and stores it against the proposal. */
+    async function processReportGeneration() {
+        if (!window.generatorPayload) return;
+
+        const media = reportState.media || [];
+        if (media.length === 0 &&
+            !confirm('No photographs, videos or documents are attached. Generate the report anyway?')) {
+            return;
+        }
+        if (!confirm('Generate the final report? Once generated it cannot be edited, and no further attachments can be added.')) {
+            return;
+        }
+
+        document.getElementById('reportErrorBox').classList.add('hidden');
+        setReportBusy(true, 'Building PDF...');
+
+        try {
+            const pdf = await buildReportPdf({ draft: false, onStatus: (m) => setReportBusy(true, m) });
+
+            setReportBusy(true, 'Saving to the server...');
+            const form = new FormData();
+            form.append('proposal_id', window.generatorPayload.id);
+            form.append('report_pdf', pdf.output('blob'), 'report.pdf');
+
+            const res = await fetch('api_save_report.php', { method: 'POST', body: form }).then(r => r.json());
+
+            if (res.status === 'success') {
+                window.location.href = 'dashboard.php?alert=Report%20Generated%20and%20Linked%20Successfully';
+                return;
+            }
+            showReportError(res.message || 'The report could not be saved.');
+        } catch (err) {
+            console.error('Report generation failed', err);
+            showReportError('The report could not be generated: ' + err.message);
+        } finally {
+            setReportBusy(false, '');
+        }
     }
 
 </script>
 
-<!-- Report Generator Modal Overlay -->
+<!-- Event Report workspace. Opened from "Create Event Report" once the event
+     has ended; attachments are uploaded as they are chosen, so the convener can
+     come back to this over several sittings. -->
 <div id="reportModal"
     class="fixed inset-0 z-[200] hidden flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 transition-all overflow-y-auto">
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg p-6 relative">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl p-6 relative my-8">
         <h3
             class="text-xl font-bold text-gray-800 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 pb-3 mb-4 flex items-center gap-2">
             <svg class="w-5 h-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            Generate Official Post-Event Report
+            <span id="reportModalTitle">Event Report</span>
         </h3>
 
-        <p class="text-sm text-gray-600 dark:text-gray-400 mb-5">Upload photographic proof and physical expense bills
-            verifying completion. Note that once generated, it cannot be edited
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            Attach what the event produced. Photographs are printed inside the report; videos and documents are kept
+            with the event record and reachable from the report's annexure by link and QR code. The details you entered
+            in the proposal are included automatically. Once the final report is generated it cannot be edited.
         </p>
 
         <div id="reportErrorBox"
-            class="hidden mb-4 p-3 bg-red-50 text-red-700 text-xs rounded border border-red-200 font-bold"></div>
+            class="hidden mb-4 p-3 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs rounded border border-red-200 dark:border-red-800 font-semibold"></div>
 
-        <div class="space-y-4 mb-6">
-            <div class="bg-blue-50/50 dark:bg-blue-900/10 p-3 rounded-md border border-blue-100 dark:border-blue-800">
-                <label class="block text-xs font-bold text-blue-800 dark:text-blue-300 mb-2">Attach Event Photographs
-                    (JPG/PNG)</label>
-                <input type="file" id="reportImageUpload" multiple accept="image/*"
-                    class="w-full text-sm text-gray-700 dark:text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-blue-900/30 dark:file:text-blue-400 cursor-pointer">
-            </div>
-
-            <div
-                class="bg-amber-50/50 dark:bg-amber-900/10 p-3 rounded-md border border-amber-100 dark:border-amber-800">
-                <label class="block text-xs font-bold text-amber-800 dark:text-amber-300 mb-2">Attach Scanned Bills &
-                    Expense Receipts</label>
-                <input type="file" id="reportBillUpload" multiple accept="image/*"
-                    class="w-full text-sm text-gray-700 dark:text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 dark:file:bg-amber-900/30 dark:file:text-amber-400 cursor-pointer">
-            </div>
+        <div id="reportProgress"
+            class="hidden mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300 text-xs rounded border border-blue-200 dark:border-blue-800 font-semibold flex items-center gap-2">
         </div>
 
-        <div class="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+            <label
+                class="cursor-pointer bg-blue-50/50 dark:bg-blue-900/10 p-3 rounded-md border border-blue-100 dark:border-blue-800 hover:border-blue-400 transition text-center">
+                <svg class="w-6 h-6 mx-auto text-blue-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <span class="block text-xs font-bold text-blue-800 dark:text-blue-300">Photographs</span>
+                <span class="block text-[10px] text-blue-600/70 dark:text-blue-400/70">JPG, PNG - 10 MB each</span>
+                <input type="file" class="hidden report-action" multiple accept="image/*"
+                    onchange="uploadMedia('photo', this)">
+            </label>
+
+            <label
+                class="cursor-pointer bg-purple-50/50 dark:bg-purple-900/10 p-3 rounded-md border border-purple-100 dark:border-purple-800 hover:border-purple-400 transition text-center">
+                <svg class="w-6 h-6 mx-auto text-purple-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <span class="block text-xs font-bold text-purple-800 dark:text-purple-300">Videos</span>
+                <span class="block text-[10px] text-purple-600/70 dark:text-purple-400/70">MP4, MOV - 100 MB each</span>
+                <input type="file" class="hidden report-action" multiple
+                    accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v"
+                    onchange="uploadMedia('video', this)">
+            </label>
+
+            <label
+                class="cursor-pointer bg-amber-50/50 dark:bg-amber-900/10 p-3 rounded-md border border-amber-100 dark:border-amber-800 hover:border-amber-400 transition text-center">
+                <svg class="w-6 h-6 mx-auto text-amber-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span class="block text-xs font-bold text-amber-800 dark:text-amber-300">Documents &amp; Bills</span>
+                <span class="block text-[10px] text-amber-600/70 dark:text-amber-400/70">PDF, Word, Excel - 25 MB
+                    each</span>
+                <input type="file" class="hidden report-action" multiple
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" onchange="uploadMedia('document', this)">
+            </label>
+        </div>
+
+        <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-3 mb-5 max-h-64 overflow-y-auto">
+            <div id="reportMediaList"></div>
+        </div>
+
+        <div class="flex flex-wrap justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
             <button onclick="closeReportModal()"
-                class="px-4 py-2 text-gray-600 dark:text-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-100 dark:hover:bg-gray-700 transition">Cancel</button>
+                class="px-4 py-2 text-gray-600 dark:text-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-100 dark:hover:bg-gray-700 transition">Close</button>
+            <button onclick="previewReport()"
+                class="report-action px-4 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-lg text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition disabled:opacity-50 inline-flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+                Preview &amp; Print
+            </button>
             <button id="reportGeneratePerformBtn" onclick="processReportGeneration()"
-                class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold shadow-md transition disabled:opacity-50 flex items-center gap-2">
-                Generate Report
+                class="report-action px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold shadow-md transition disabled:opacity-50 flex items-center gap-2">
+                Generate &amp; Save Final Report
             </button>
         </div>
     </div>

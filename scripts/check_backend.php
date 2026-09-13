@@ -380,6 +380,27 @@ if ($connectionAttempted) {
                 record('Report files', ST_PASS, "all {$total} referenced report file(s) exist");
             }
         }
+        // ---- attachments whose file is gone
+        if (isset($have['proposal_media'])) {
+            $res = $conn->query("SELECT stored_path FROM proposal_media");
+            $orphans = 0;
+            $total = 0;
+            while ($row = $res->fetch_assoc()) {
+                $total++;
+                if (!is_file($ROOT . '/' . ltrim((string) $row['stored_path'], '/'))) {
+                    $orphans++;
+                }
+            }
+            if ($total === 0) {
+                record('Report attachments', ST_PASS, 'no attachments stored yet');
+            } elseif ($orphans > 0) {
+                record('Report attachments', ST_WARN,
+                    "{$orphans} of {$total} attachment(s) are missing from disk. "
+                    . 'Their annexure links will 404. Check whether uploads/ was cleared.');
+            } else {
+                record('Report attachments', ST_PASS, "all {$total} attachment(s) exist");
+            }
+        }
     } catch (Throwable $e) {
         // Never surface raw driver text.
         record('Database connectivity', ST_FAIL,
@@ -394,17 +415,21 @@ if (!$schemaChecked && $dbConfigOk && $conn instanceof mysqli === false) {
 /* --------------------------------------------- 5. Storage directories */
 
 // Permissions are inspected, never modified.
-foreach (['reports' => 'generated event report PDFs'] as $dir => $why) {
+$storageDirs = [
+    'reports' => ['generated event report PDFs', 'api_save_report.php'],
+    'uploads' => ['report attachments - photographs, videos and documents', 'api_upload_media.php'],
+];
+foreach ($storageDirs as $dir => [$why, $writer]) {
     $path = $ROOT . '/' . $dir;
     if (!is_dir($path)) {
         record("Directory: {$dir}/", ST_WARN,
-            "Does not exist ({$why}). api_save_report.php will try to create it on first upload.");
+            "Does not exist ({$why}). {$writer} will try to create it on first upload.");
         continue;
     }
     if (!is_writable($path)) {
         record("Directory: {$dir}/", ST_FAIL,
             "Not writable by " . (get_current_user() ?: 'the current user')
-            . ". Report uploads will fail. Grant write access to the web server user.");
+            . ". Uploads will fail ({$why}). Grant write access to the web server user.");
         continue;
     }
     $perms = substr(sprintf('%o', fileperms($path)), -4);

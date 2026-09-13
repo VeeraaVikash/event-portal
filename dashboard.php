@@ -15,6 +15,12 @@ if (strtoupper($role) === 'HOD') {
     exit;
 }
 
+// Catch-up sweep for deployments with no cron job. Throttled to once an hour
+// across all dashboards, and the mail itself is sent after the page has been
+// flushed, so nobody waits on SMTP. See scripts/send_reminders.php.
+require_once 'includes/reminders.php';
+ec_reminders_maybe_run($conn);
+
 // Fetch Stats
 $stats = [
     'total' => 0,
