@@ -149,14 +149,14 @@ function ec_reminder_message(string $kind, array $proposal, array $recipient): a
             $lead    = $isSelf
                 ? "Your event starts today."
                 : "An approved event in your department starts today.";
-            $action  = "Remember to collect photographs, attendance and bills during the event - they are needed for the post-event report.";
+            $action  = "Remember to collect photographs, the attendance sheet and the bills during the event - the post-event report asks for all three.";
             break;
 
         case 'report_due':
         default:
             $subject = "Action needed: submit the event report for {$title} ({$ref})";
             $lead    = "Your event finished on {$end} and its report has not been generated yet.";
-            $action  = "Open the proposal on your dashboard and use Create Event Report to attach photographs, videos and documents, then generate the final PDF.";
+            $action  = "Open the proposal on your dashboard and use Create Event Report: write what happened, record who attended, attach the photographs, bills and attendance proof, then generate the final PDF.";
             break;
     }
 

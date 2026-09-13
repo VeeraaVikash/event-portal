@@ -95,6 +95,14 @@ if($result->num_rows > 0) {
     // HOD. Never stored on the server.
     $proposal['can_draft']       = $is_owner && $proposal['status'] === 'Approved' && !$proposal['is_completed'];
 
+    // Photographs are capped at two per day of the event; the workspace states
+    // the allowance and the upload endpoint enforces it.
+    $proposal['event_days']      = ec_event_days($proposal);
+    $proposal['photo_allowance'] = ec_photo_allowance($proposal);
+    $proposal['photos_used']     = count(array_filter($proposal['media'], fn($m) => $m['kind'] === 'photo'));
+    $proposal['summary_min_words'] = EC_SUMMARY_MIN_WORDS;
+    $proposal['summary_max_words'] = EC_SUMMARY_MAX_WORDS;
+
     echo json_encode($proposal);
 } else {
     http_response_code(404);

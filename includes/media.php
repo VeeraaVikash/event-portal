@@ -2,10 +2,18 @@
 /**
  * Shared rules for post-event report attachments.
  *
- * Photographs are embedded into the generated PDF by the browser. Videos and
- * documents cannot be - a PDF cannot play video, and the browser generator
- * cannot merge foreign files - so every upload is stored on disk and the report
- * prints an annexure linking back to download_media.php.
+ * A report carries two kinds of evidence: photographs of the event, which are
+ * printed into the PDF, and documents - bills, attendance proof - which cannot
+ * be merged into it by the browser generator and so are stored on disk and
+ * listed in an annexure linking back to download_media.php.
+ *
+ * Photographs are capped at two per day of the event, so a five-day event may
+ * carry ten. The cap is what stops a report becoming a photo album, and it is
+ * enforced here as well as being stated in the workspace.
+ *
+ * Video was accepted briefly and is not any more: a PDF cannot play one, and
+ * bills and attendance proof are what the report is actually for. Rows for any
+ * video uploaded in that window still serve and still list in the annexure.
  *
  * Nothing under uploads/ may be served directly by the web server; .htaccess
  * and web.config both block the segment. download_media.php is the only
@@ -33,12 +41,6 @@ function ec_media_rules(): array
             'ext'       => ['jpg', 'jpeg', 'png', 'webp', 'gif'],
             'mime'      => ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
         ],
-        'video' => [
-            'label'     => 'Video',
-            'max_bytes' => 100 * 1024 * 1024,
-            'ext'       => ['mp4', 'webm', 'mov', 'm4v'],
-            'mime'      => ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v'],
-        ],
         'document' => [
             'label'     => 'Document',
             'max_bytes' => 25 * 1024 * 1024,
@@ -61,6 +63,71 @@ function ec_media_rules(): array
             ],
         ],
     ];
+}
+
+/** Photographs allowed per day of the event. */
+const EC_PHOTOS_PER_DAY = 2;
+
+/** Bounds on the convener's account of what happened. */
+const EC_SUMMARY_MIN_WORDS = 50;
+const EC_SUMMARY_MAX_WORDS = 400;
+
+/** How many days the event ran, counting both end days. */
+function ec_event_days(array $proposal): int
+{
+    if (empty($proposal['start_date']) || empty($proposal['end_date'])) {
+        return 1;
+    }
+    $start = strtotime((string) $proposal['start_date']);
+    $end   = strtotime((string) $proposal['end_date']);
+    if ($start === false || $end === false || $end < $start) {
+        return 1;
+    }
+    return (int) floor(($end - $start) / 86400) + 1;
+}
+
+/** Photographs this event may carry in total. */
+function ec_photo_allowance(array $proposal): int
+{
+    return ec_event_days($proposal) * EC_PHOTOS_PER_DAY;
+}
+
+/** How many attachments of one kind a proposal already has. */
+function ec_media_count(mysqli $conn, int $proposalId, string $kind): int
+{
+    $stmt = $conn->prepare('SELECT COUNT(*) FROM proposal_media WHERE proposal_id = ? AND kind = ?');
+    $stmt->bind_param('is', $proposalId, $kind);
+    $stmt->execute();
+    $stmt->bind_result($count);
+    $stmt->fetch();
+    $stmt->close();
+    return (int) $count;
+}
+
+/**
+ * The attendance figures a report records.
+ *
+ * A headcount alone does not answer what the department is asked - who came -
+ * so the four groups are counted separately and totalled.
+ */
+function ec_attendance_fields(): array
+{
+    return [
+        'att_internal_students' => 'Internal students',
+        'att_external_students' => 'External students',
+        'att_internal_faculty'  => 'Internal faculty',
+        'att_external_faculty'  => 'External faculty',
+    ];
+}
+
+/** Words in a summary, for the minimum length the report asks for. */
+function ec_word_count(string $text): int
+{
+    $trimmed = trim($text);
+    if ($trimmed === '') {
+        return 0;
+    }
+    return count(preg_split('/\s+/u', $trimmed) ?: []);
 }
 
 /** True when $kind is one the application accepts. */

@@ -775,26 +775,67 @@ require 'partials/nav.php';
     //          stored on the server as the official report.
     //
     // A PDF cannot play a video and this generator cannot merge foreign
-    // documents, so videos and documents stay on the server: the annexure
+    // documents, so bills and attendance proof stay on the server: the annexure
     // carries a QR code and a link to download_media.php for each one.
 
     const reportState = { media: [], busy: false };
 
     const REPORT_KINDS = {
-        photo:    { label: 'Photograph', plural: 'Photographs', limit: '10 MB each', accept: 'image/*' },
-        video:    { label: 'Video',      plural: 'Videos',      limit: '100 MB each', accept: 'video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v' },
-        document: { label: 'Document',   plural: 'Documents',   limit: '25 MB each',  accept: '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv' }
+        photo:    { label: 'Photograph', plural: 'Photographs', limit: '10 MB each' },
+        document: { label: 'Document',   plural: 'Documents',   limit: '25 MB each' },
+        // Video was accepted briefly. Rows from that window still list and still
+        // open, so the label has to survive even though nothing new can be added.
+        video:    { label: 'Video',      plural: 'Videos',      limit: 'no longer accepted' }
     };
 
-    /** The attendance typed into the workspace, or null when left blank. */
+    /** The four attendance boxes, as numbers. Blank counts as none. */
+    const ATTENDANCE_FIELDS = {
+        att_internal_students: 'Internal students',
+        att_external_students: 'External students',
+        att_internal_faculty:  'Internal faculty',
+        att_external_faculty:  'External faculty'
+    };
+
     function reportAttendance() {
-        const el = document.getElementById('reportAttendance');
-        const raw = el ? el.value.trim() : '';
-        if (raw === '') {
-            return (window.generatorPayload && window.generatorPayload.actual_participants) || null;
-        }
-        const n = parseInt(raw, 10);
-        return (isNaN(n) || n < 0) ? null : n;
+        const out = { total: 0, any: false };
+        Object.keys(ATTENDANCE_FIELDS).forEach(field => {
+            const el = document.getElementById(field);
+            const raw = el ? el.value.trim() : '';
+            const n = raw === '' ? 0 : parseInt(raw, 10);
+            out[field] = (isNaN(n) || n < 0) ? 0 : n;
+            if (raw !== '') out.any = true;
+            out.total += out[field];
+        });
+        return out;
+    }
+
+    /** Keeps the running total under the attendance boxes honest. */
+    function updateAttendanceTotal() {
+        const a = reportAttendance();
+        const el = document.getElementById('attendanceTotal');
+        if (el) el.innerText = a.any ? a.total.toLocaleString('en-IN') : '—';
+    }
+
+    /** The convener's account of the event, and how long it is. */
+    function reportSummary() {
+        const el = document.getElementById('reportSummary');
+        return el ? el.value.trim() : '';
+    }
+
+    function summaryWordCount() {
+        const text = reportSummary();
+        return text === '' ? 0 : text.split(/\s+/).length;
+    }
+
+    function updateSummaryCount() {
+        const el = document.getElementById('summaryCount');
+        if (!el) return;
+        const words = summaryWordCount();
+        const min = (window.generatorPayload && window.generatorPayload.summary_min_words) || 50;
+        el.innerText = words + ' / ' + min + ' words';
+        el.classList.toggle('text-emerald-600', words >= min);
+        el.classList.toggle('dark:text-emerald-400', words >= min);
+        el.classList.toggle('text-gray-500', words < min);
     }
 
     /** Escapes a value before it goes into the generated HTML. */
@@ -814,10 +855,21 @@ require 'partials/nav.php';
         if (!data) return;
 
         reportState.media = data.media || [];
-        const attendanceEl = document.getElementById('reportAttendance');
-        if (attendanceEl) {
-            attendanceEl.value = data.actual_participants ?? '';
-            attendanceEl.placeholder = 'e.g. ' + (data.total_expected_participants || 0) + ' were expected';
+        Object.keys(ATTENDANCE_FIELDS).forEach(field => {
+            const el = document.getElementById(field);
+            if (el) el.value = data[field] ?? '';
+        });
+        updateAttendanceTotal();
+
+        const summaryEl = document.getElementById('reportSummary');
+        if (summaryEl) summaryEl.value = data.report_summary || '';
+        updateSummaryCount();
+
+        const allowance = document.getElementById('photoAllowance');
+        if (allowance) {
+            const days = data.event_days || 1;
+            allowance.innerText = 'Up to ' + data.photo_allowance + ' for this event - 2 per day over '
+                + days + (days === 1 ? ' day' : ' days') + '. ' + (data.photos_used || 0) + ' attached so far.';
         }
         document.getElementById('reportErrorBox').classList.add('hidden');
         document.getElementById('reportProgress').classList.add('hidden');
@@ -853,8 +905,8 @@ require 'partials/nav.php';
 
         if (media.length === 0) {
             box.innerHTML = '<p class="text-xs text-gray-500 dark:text-gray-400 italic py-3 text-center">'
-                + 'No files attached yet. Photographs are printed inside the report; videos and documents are '
-                + 'stored and linked from its annexure.</p>';
+                + 'No files attached yet. Photographs are printed inside the report; bills and attendance proof '
+                + 'are stored and linked from its annexure.</p>';
             return;
         }
 
@@ -869,8 +921,10 @@ require 'partials/nav.php';
             const items = media.filter(m => m.kind === kind);
             if (items.length === 0) return;
 
+            const allowance = (kind === 'photo' && window.generatorPayload)
+                ? ' of ' + window.generatorPayload.photo_allowance : '';
             html += '<p class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mt-3 mb-1">'
-                + esc(REPORT_KINDS[kind].plural) + ' (' + items.length + ')</p>';
+                + esc(REPORT_KINDS[kind].plural) + ' (' + items.length + allowance + ')</p>';
 
             items.forEach(m => {
                 html += '<div class="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 group">'
@@ -894,7 +948,7 @@ require 'partials/nav.php';
      * Uploads the chosen files straight away.
      *
      * Attachments live on the server rather than only in the browser, so the
-     * convener can collect them over several sittings and a 100 MB video is
+     * convener can collect them over several sittings and a large scan is
      * only ever sent once. XMLHttpRequest rather than fetch, for the progress
      * readout - which means setting the CSRF header by hand.
      */
@@ -930,6 +984,7 @@ require 'partials/nav.php';
             if (res.media) {
                 reportState.media = res.media;
                 window.generatorPayload.media = res.media;
+                window.generatorPayload.photos_used = res.media.filter(m => m.kind === 'photo').length;
                 renderMediaList();
             }
             if (res.status !== 'success') {
@@ -963,6 +1018,7 @@ require 'partials/nav.php';
             if (res.media) {
                 reportState.media = res.media;
                 window.generatorPayload.media = res.media;
+                window.generatorPayload.photos_used = res.media.filter(m => m.kind === 'photo').length;
                 renderMediaList();
             }
             if (res.status !== 'success') {
@@ -1071,7 +1127,7 @@ require 'partials/nav.php';
                 </tr>
                 <tr>
                     <td style="padding: 4px 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Participants</td>
-                    <td style="padding: 4px 6px; border: 1px solid #ccc;" colspan="3"><b>Expected:</b> ${esc(pData.total_expected_participants)}${opts.attended ? ' | <b>Attended:</b> ' + esc(opts.attended) : ''} | <b>Target Audience:</b> ${esc(pData.participant_categories)}</td>
+                    <td style="padding: 4px 6px; border: 1px solid #ccc;" colspan="3"><b>Expected:</b> ${esc(pData.total_expected_participants)}${(opts.attendance && opts.attendance.any) ? ' | <b>Attended:</b> ' + esc(opts.attendance.total) : ''} | <b>Target Audience:</b> ${esc(pData.participant_categories)}</td>
                 </tr>
                 <tr>
                     <td style="padding: 6px; font-weight: bold; border: 1px solid #ccc; background: #f9f9f9;">Event Description</td>
@@ -1079,6 +1135,44 @@ require 'partials/nav.php';
                 </tr>
             </table>
         `;
+
+        // What happened, in the convener's words. First thing after the facts.
+        if (!draft && opts.summary) {
+            html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Summary of the Event</h3>
+            <p style="text-align: justify; margin: 0 0 12px; font-size: 11px; line-height: 1.5;">${esc(opts.summary)}</p>`;
+        }
+
+        // Who came, by group. A total alone does not answer that question.
+        if (!draft && opts.attendance && opts.attendance.any) {
+            const a = opts.attendance;
+            html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Attendance</h3>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px;">
+            <tr>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">Internal students</th>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">External students</th>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">Internal faculty</th>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #eee;">External faculty</th>
+                <th style="border: 1px solid #ccc; padding: 4px; background: #f0f8ff;">Total attended</th>
+            </tr>
+            <tr>
+                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${esc(a.att_internal_students)}</td>
+                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${esc(a.att_external_students)}</td>
+                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${esc(a.att_internal_faculty)}</td>
+                <td style="border: 1px solid #ccc; padding: 4px; text-align: center;">${esc(a.att_external_faculty)}</td>
+                <td style="border: 1px solid #ccc; padding: 4px; text-align: center; font-weight: bold; background: #f0f8ff;">${esc(a.total)}</td>
+            </tr>
+            </table>`;
+        }
+
+        // The evidence this report carries, and the rule it was collected under.
+        if (!draft) {
+            const days = pData.event_days || 1;
+            html += `<p style="font-size: 9px; color: #555; margin: 0 0 12px;">
+                Evidence attached: ${esc(opts.photoCount || 0)} photograph${(opts.photoCount === 1) ? '' : 's'}
+                (allowance ${esc(pData.photo_allowance || 0)} - two per day over ${esc(days)} day${days === 1 ? '' : 's'})
+                and ${esc(opts.documentCount || 0)} supporting document${(opts.documentCount === 1) ? '' : 's'}.
+            </p>`;
+        }
 
         if (pData.guests && pData.guests.length > 0) {
             html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Chief Guests / Experts</h3>
@@ -1171,8 +1265,8 @@ require 'partials/nav.php';
 
         // Annexure: what the PDF itself cannot carry.
         if (annexure.length > 0) {
-            html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Annexure - Supporting Material</h3>
-            <p style="font-size: 9px; color: #666; margin: 0 0 6px;">Held with the event record. Scan the code or open the link while signed in to SRM Event Connect.</p>
+            html += `<h3 style="background:#004289; color:white; padding: 4px 8px; margin: 15px 0 5px; font-size: 13px;">Annexure - Bills, Attendance Proof and Documents</h3>
+            <p style="font-size: 9px; color: #666; margin: 0 0 6px;">Held with the event record - the browser cannot merge them into this PDF. Scan the code or open the link while signed in to SRM Event Connect.</p>
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 10px;">
             <tr>
                 <th style="border: 1px solid #ccc; padding: 4px; background: #eee; width: 5%;">#</th>
@@ -1239,8 +1333,11 @@ require 'partials/nav.php';
         const html = buildReportHtml(pData, {
             draft: opts.draft,
             annexure: others,
-            // Only the post-event report carries a turnout; a draft predates it.
-            attended: opts.draft ? null : reportAttendance()
+            // A draft predates the event, so it carries none of this.
+            attendance: opts.draft ? null : reportAttendance(),
+            summary: opts.draft ? '' : reportSummary(),
+            photoCount: photos.length,
+            documentCount: others.length
         });
 
         const opt = {
@@ -1359,8 +1456,15 @@ require 'partials/nav.php';
         if (!window.generatorPayload) return;
 
         const media = reportState.media || [];
+        const minWords = window.generatorPayload.summary_min_words || 50;
+        if (summaryWordCount() < minWords) {
+            showReportError('Write the summary of what happened first - at least ' + minWords
+                + ' words. It currently has ' + summaryWordCount() + '.');
+            document.getElementById('reportSummary').focus();
+            return;
+        }
         if (media.length === 0 &&
-            !confirm('No photographs, videos or documents are attached. Generate the report anyway?')) {
+            !confirm('No photographs or documents are attached. Generate the report anyway?')) {
             return;
         }
         if (!confirm('Generate the final report? Once generated it cannot be edited, and no further attachments can be added.')) {
@@ -1377,9 +1481,10 @@ require 'partials/nav.php';
             const form = new FormData();
             form.append('proposal_id', window.generatorPayload.id);
             form.append('report_pdf', pdf.output('blob'), 'report.pdf');
-            const attended = reportAttendance();
-            if (attended !== null) {
-                form.append('actual_participants', attended);
+            form.append('report_summary', reportSummary());
+            const attendance = reportAttendance();
+            if (attendance.any) {
+                Object.keys(ATTENDANCE_FIELDS).forEach(field => form.append(field, attendance[field]));
             }
 
             const res = await fetch('api_save_report.php', { method: 'POST', body: form }).then(r => r.json());
@@ -1415,9 +1520,10 @@ require 'partials/nav.php';
         </h3>
 
         <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-            Attach what the event produced. Photographs are printed inside the report; videos and documents are kept
-            with the event record and reachable from the report's annexure by link and QR code. The details you entered
-            in the proposal are included automatically. Once the final report is generated it cannot be edited.
+            Write what happened, record who attended, and attach the evidence: photographs of the event, and the bills
+            and attendance proof that go with it. Photographs are printed inside the report; documents are kept with the
+            event record and reachable from the report's annexure by link and QR code. Everything you entered in the
+            proposal is included automatically. Once the final report is generated it cannot be edited.
         </p>
 
         <div id="reportErrorBox"
@@ -1428,17 +1534,51 @@ require 'partials/nav.php';
         </div>
 
         <div class="mb-5 p-3 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/20">
-            <label for="reportAttendance"
-                class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">How many participants attended?</label>
-            <input type="number" id="reportAttendance" min="0" max="1000000"
-                class="w-full sm:w-56 px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
+            <div class="flex items-baseline justify-between mb-1">
+                <label for="reportSummary" class="block text-xs font-bold text-gray-700 dark:text-gray-300">
+                    Summary of what happened <span class="text-red-500">*</span>
+                </label>
+                <span id="summaryCount" class="text-[11px] font-semibold text-gray-500">0 / 50 words</span>
+            </div>
+            <textarea id="reportSummary" rows="4" oninput="updateSummaryCount()"
+                placeholder="What was conducted, who spoke, what the participants took away, and how it concluded."
+                class="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none"></textarea>
             <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
-                Printed in the report next to the expected count, and used for the department analysis.
-                Leave blank if you did not take a headcount.
+                At least 50 words. Printed at the top of the report, before the tables.
             </p>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+        <div class="mb-5 p-3 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/20">
+            <label class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">Who attended?</label>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                    <label for="att_internal_students" class="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">Internal students</label>
+                    <input type="number" id="att_internal_students" min="0" max="1000000" oninput="updateAttendanceTotal()"
+                        class="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label for="att_external_students" class="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">External students</label>
+                    <input type="number" id="att_external_students" min="0" max="1000000" oninput="updateAttendanceTotal()"
+                        class="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label for="att_internal_faculty" class="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">Internal faculty</label>
+                    <input type="number" id="att_internal_faculty" min="0" max="1000000" oninput="updateAttendanceTotal()"
+                        class="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label for="att_external_faculty" class="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">External faculty</label>
+                    <input type="number" id="att_external_faculty" min="0" max="1000000" oninput="updateAttendanceTotal()"
+                        class="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
+                </div>
+            </div>
+            <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-2">
+                Total attended: <span id="attendanceTotal" class="font-bold text-gray-700 dark:text-gray-200">—</span>.
+                Printed in the report and counted in the department analysis. Leave all four blank if no headcount was taken.
+            </p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
             <label
                 class="cursor-pointer bg-blue-50/50 dark:bg-blue-900/10 p-3 rounded-md border border-blue-100 dark:border-blue-800 hover:border-blue-400 transition text-center">
                 <svg class="w-6 h-6 mx-auto text-blue-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1447,21 +1587,9 @@ require 'partials/nav.php';
                 </svg>
                 <span class="block text-xs font-bold text-blue-800 dark:text-blue-300">Photographs</span>
                 <span class="block text-[10px] text-blue-600/70 dark:text-blue-400/70">JPG, PNG - 10 MB each</span>
+                <span id="photoAllowance" class="block text-[10px] font-semibold text-blue-700 dark:text-blue-300 mt-1">Two per day of the event</span>
                 <input type="file" class="hidden report-action" multiple accept="image/*"
                     onchange="uploadMedia('photo', this)">
-            </label>
-
-            <label
-                class="cursor-pointer bg-purple-50/50 dark:bg-purple-900/10 p-3 rounded-md border border-purple-100 dark:border-purple-800 hover:border-purple-400 transition text-center">
-                <svg class="w-6 h-6 mx-auto text-purple-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                <span class="block text-xs font-bold text-purple-800 dark:text-purple-300">Videos</span>
-                <span class="block text-[10px] text-purple-600/70 dark:text-purple-400/70">MP4, MOV - 100 MB each</span>
-                <input type="file" class="hidden report-action" multiple
-                    accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v"
-                    onchange="uploadMedia('video', this)">
             </label>
 
             <label
@@ -1470,9 +1598,10 @@ require 'partials/nav.php';
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                <span class="block text-xs font-bold text-amber-800 dark:text-amber-300">Documents &amp; Bills</span>
+                <span class="block text-xs font-bold text-amber-800 dark:text-amber-300">Bills &amp; Attendance Proof</span>
                 <span class="block text-[10px] text-amber-600/70 dark:text-amber-400/70">PDF, Word, Excel - 25 MB
                     each</span>
+                <span class="block text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-1">No limit</span>
                 <input type="file" class="hidden report-action" multiple
                     accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" onchange="uploadMedia('document', this)">
             </label>

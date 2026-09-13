@@ -417,7 +417,7 @@ if (!$schemaChecked && $dbConfigOk && $conn instanceof mysqli === false) {
 // Permissions are inspected, never modified.
 $storageDirs = [
     'reports' => ['generated event report PDFs', 'api_save_report.php'],
-    'uploads' => ['report attachments - photographs, videos and documents', 'api_upload_media.php'],
+    'uploads' => ['report attachments - photographs, bills and attendance proof', 'api_upload_media.php'],
 ];
 foreach ($storageDirs as $dir => [$why, $writer]) {
     $path = $ROOT . '/' . $dir;

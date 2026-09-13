@@ -26,16 +26,50 @@ if(!$prop_id) {
     exit;
 }
 
-// How many people actually turned up. Optional - a report generated before
-// this field existed simply has none - but bounded when supplied, since it
-// feeds the department analysis.
-$attended = null;
-if (isset($_POST['actual_participants']) && trim((string) $_POST['actual_participants']) !== '') {
-    $attended = (int) $_POST['actual_participants'];
-    if ($attended < 0 || $attended > 1000000) {
-        ec_json(["status" => "error", "message" => "Attendance must be between 0 and 1,000,000."], 400);
+// Who actually turned up, counted by group. Any blank is taken as none; if
+// every one is blank the report simply records no attendance, which the
+// department analysis treats differently from a genuine zero.
+$attendance = [];
+$anyProvided = false;
+foreach (ec_attendance_fields() as $field => $label) {
+    $raw = trim((string) ($_POST[$field] ?? ''));
+    if ($raw === '') {
+        $attendance[$field] = 0;
+        continue;
+    }
+    if (!ctype_digit($raw)) {
+        ec_json(["status" => "error", "message" => "{$label} must be a whole number."], 400);
         exit;
     }
+    $value = (int) $raw;
+    if ($value > 1000000) {
+        ec_json(["status" => "error", "message" => "{$label} is implausibly large."], 400);
+        exit;
+    }
+    $attendance[$field] = $value;
+    $anyProvided = true;
+}
+$attended = $anyProvided ? array_sum($attendance) : null;
+
+// What happened, in the convener's own words. Printed at the top of the report,
+// so it is the one thing a reader sees before the tables.
+$summary = trim((string) ($_POST['report_summary'] ?? ''));
+$words = ec_word_count($summary);
+if ($words < EC_SUMMARY_MIN_WORDS) {
+    ec_json([
+        "status"  => "error",
+        "message" => sprintf('The summary of what happened needs at least %d words; this one has %d.',
+            EC_SUMMARY_MIN_WORDS, $words),
+    ], 400);
+    exit;
+}
+if ($words > EC_SUMMARY_MAX_WORDS) {
+    ec_json([
+        "status"  => "error",
+        "message" => sprintf('The summary is %d words; please keep it under %d.',
+            $words, EC_SUMMARY_MAX_WORDS),
+    ], 400);
+    exit;
 }
 
 // Ensure the proposal belongs to the caller, and that a report is due.
@@ -131,11 +165,17 @@ if(!move_uploaded_file($tmp, $path)) {
 // Record the path; if the DB write fails, remove the orphaned file so storage
 // and database stay consistent.
 try {
-    $uQ = "UPDATE proposals SET report_path = ?, report_generated_at = NOW(),
-                  actual_participants = COALESCE(?, actual_participants)
+    $uQ = "UPDATE proposals
+              SET report_path = ?, report_generated_at = NOW(), report_summary = ?,
+                  actual_participants = ?,
+                  att_internal_students = ?, att_external_students = ?,
+                  att_internal_faculty = ?, att_external_faculty = ?
             WHERE id = ? AND user_id = ?";
     $stU = $conn->prepare($uQ);
-    $stU->bind_param("siii", $path, $attended, $prop_id, $user_id);
+    $stU->bind_param("ssiiiiiii", $path, $summary, $attended,
+        $attendance['att_internal_students'], $attendance['att_external_students'],
+        $attendance['att_internal_faculty'], $attendance['att_external_faculty'],
+        $prop_id, $user_id);
     $stU->execute();
     $stU->close();
     ec_json(["status" => "success", "report_path" => $path]);

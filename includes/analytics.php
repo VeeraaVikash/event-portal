@@ -82,6 +82,8 @@ function ec_analytics(mysqli $conn, string $department, array $period): array
 {
     $sql = 'SELECT p.id, p.title, p.category, p.start_date, p.end_date, p.status,
                    p.total_expected_participants, p.actual_participants,
+                   p.att_internal_students, p.att_external_students,
+                   p.att_internal_faculty, p.att_external_faculty,
                    p.report_path, p.report_generated_at,
                    u.id AS convener_id, u.full_name AS convener_name, u.email AS convener_email,
                    (SELECT COALESCE(SUM(b.total), 0) FROM proposal_budgets b
@@ -105,6 +107,9 @@ function ec_analytics(mysqli $conn, string $department, array $period): array
     $category = [];
     $months   = [];
     $status   = [];
+
+    // The four groups a report counts, summed across the period.
+    $groups = array_fill_keys(array_keys(ec_attendance_fields()), 0);
 
     $totals = [
         'events'                => 0,
@@ -132,6 +137,11 @@ function ec_analytics(mysqli $conn, string $department, array $period): array
         $budget   = (float) $row['budget_total'];
         $hasReport = !empty($row['report_path']);
 
+        $breakdown = [];
+        foreach (array_keys(ec_attendance_fields()) as $field) {
+            $breakdown[$field] = ($row[$field] === null) ? null : (int) $row[$field];
+        }
+
         $event = [
             'id'            => (int) $row['id'],
             'ref'           => 'PRO-' . sprintf('%04d', (int) $row['id']),
@@ -146,6 +156,7 @@ function ec_analytics(mysqli $conn, string $department, array $period): array
             'expected'      => $expected,
             'attended'      => $held ? $attended : null,
             'attendance_recorded' => $recorded !== null,
+            'breakdown'     => $breakdown,
             'budget'        => $budget,
             'report_filed'  => $hasReport,
             'report_path'   => $row['report_path'],
@@ -172,6 +183,9 @@ function ec_analytics(mysqli $conn, string $department, array $period): array
         $totals['attachments'] += (int) $row['media_count'];
         if ($recorded !== null) {
             $totals['attendance_recorded']++;
+            foreach ($breakdown as $field => $value) {
+                $groups[$field] += (int) $value;
+            }
         }
         $hasReport ? $totals['reports_filed']++ : $totals['reports_pending']++;
 
@@ -241,6 +255,7 @@ function ec_analytics(mysqli $conn, string $department, array $period): array
         'period'     => $period,
         'generated'  => date('Y-m-d H:i'),
         'totals'     => $totals,
+        'groups'     => $groups,
         // Deliberately not 'status': these responses are wrapped in an envelope
         // whose own status field says whether the call succeeded.
         'by_status'  => $status,

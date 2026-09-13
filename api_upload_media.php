@@ -1,9 +1,10 @@
 <?php
 /**
- * Stores photographs, videos and documents for a post-event report.
+ * Stores photographs, bills and attendance proof for a post-event report.
  *
  * Uploads are kept on the server rather than only inside the generated PDF:
- * a PDF cannot carry a video, the convener needs to be able to attach files
+ * the browser generator cannot merge a foreign document into the PDF, the
+ * convener needs to be able to attach files
  * across several sittings, and the HOD needs the originals afterwards. The
  * report's annexure links back to download_media.php for each one.
  *
@@ -48,6 +49,13 @@ if ($proposalId <= 0) {
     ec_json(['status' => 'error', 'message' => 'Missing proposal ID'], 400);
     exit;
 }
+if ($kind === 'video') {
+    ec_json([
+        'status'  => 'error',
+        'message' => 'Videos are no longer accepted. A report carries photographs, bills and attendance proof.',
+    ], 400);
+    exit;
+}
 if (!ec_media_kind_valid($kind)) {
     ec_json(['status' => 'error', 'message' => 'Unknown attachment type'], 400);
     exit;
@@ -83,6 +91,24 @@ if (!isset($_FILES['files'])) {
 }
 
 $rules = ec_media_rules()[$kind];
+
+// Two photographs per day of the event. Without a cap a report turns into a
+// photo album, and the PDF grows a page per picture.
+if ($kind === 'photo') {
+    $allowance = ec_photo_allowance($proposal);
+    $already   = ec_media_count($conn, $proposalId, 'photo');
+    if ($already >= $allowance) {
+        ec_json([
+            'status'  => 'error',
+            'message' => sprintf(
+                'This event already has its %d photographs (%d per day over %d day%s).',
+                $allowance, EC_PHOTOS_PER_DAY, ec_event_days($proposal),
+                ec_event_days($proposal) === 1 ? '' : 's'),
+            'media'   => ec_media_list($conn, $proposalId),
+        ], 409);
+        exit;
+    }
+}
 
 // Normalise both the single-file and multi-file shapes of $_FILES.
 $incoming = [];
@@ -127,6 +153,13 @@ $rejected = [];
 
 foreach ($incoming as $file) {
     $displayName = mb_substr((string) $file['name'], 0, 255);
+
+    // A batch can cross the cap part-way; the rest are reported, not stored.
+    if ($kind === 'photo' && ($already + $accepted) >= $allowance) {
+        $rejected[] = sprintf('%s exceeds the %d photographs allowed for this event',
+            $displayName, $allowance);
+        continue;
+    }
 
     if ($file['error'] !== UPLOAD_ERR_OK) {
         $rejected[] = $displayName . ' ' . ($uploadErrors[$file['error']] ?? 'could not be uploaded');

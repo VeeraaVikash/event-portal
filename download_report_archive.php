@@ -10,9 +10,10 @@
  *   download_report_archive.php?period=3m
  *   download_report_archive.php?period=12m&include_media=1
  *
- * Videos are never included. One event can carry 100 MB of them and a year's
- * worth would be unusable as a download; index.csv lists each one with the URL
- * that serves it instead.
+ * Attachments are photographs, bills and attendance proof. Legacy video rows
+ * from the window when video was accepted are never bundled - a year's worth
+ * would be unusable as a download - and index.csv carries the URL that serves
+ * each one instead.
  */
 
 require_once 'includes/workflow.php';
@@ -138,6 +139,12 @@ $lines[] = str_repeat('-', 62);
 $lines[] = sprintf('  Events held                  %d', $t['events_held']);
 $lines[] = sprintf('  Participants attended        %s', number_format($t['attended']));
 $lines[] = sprintf('  Against expected             %s (%d%%)', number_format($t['expected']), $t['attendance_percent']);
+$lines[] = sprintf('    Students  internal %s / external %s',
+    number_format($data['groups']['att_internal_students']),
+    number_format($data['groups']['att_external_students']));
+$lines[] = sprintf('    Faculty   internal %s / external %s',
+    number_format($data['groups']['att_internal_faculty']),
+    number_format($data['groups']['att_external_faculty']));
 $lines[] = sprintf('  Budget across those events   %s', ec_money($t['budget']));
 $lines[] = sprintf('  Reports filed                %d of %d (%d%%)', $t['reports_filed'], $t['events_held'], $t['reports_percent']);
 $lines[] = sprintf('  Reports still outstanding    %d', $t['reports_pending']);
@@ -180,8 +187,7 @@ if ($includeMedia) {
     $lines[] = '  attachments/  photographs and documents, by event';
 }
 $lines[] = '';
-$lines[] = '  Videos are not included. index.csv carries a link for each one;';
-$lines[] = '  opening it requires a signed-in session.';
+$lines[] = '  Opening anything linked from index.csv requires a signed-in session.';
 
 $zip->addFromString('SUMMARY.txt', implode("\n", $lines) . "\n");
 
@@ -202,6 +208,10 @@ foreach ($data['events'] as $e) {
         $e['held'] ? 'yes' : 'no',
         $e['expected'],
         $e['attended'] ?? '',
+        $e['breakdown']['att_internal_students'] ?? '',
+        $e['breakdown']['att_external_students'] ?? '',
+        $e['breakdown']['att_internal_faculty'] ?? '',
+        $e['breakdown']['att_external_faculty'] ?? '',
         $e['attendance_recorded'] ? 'recorded' : 'expected figure used',
         number_format($e['budget'], 2, '.', ''),
         $e['report_filed'] ? 'filed' : 'not filed',
@@ -212,7 +222,8 @@ foreach ($data['events'] as $e) {
 $zip->addFromString('index.csv', ec_archive_csv([
     'Reference', 'Title', 'Category', 'Convener', 'Convener e-mail',
     'Start date', 'End date', 'Status', 'Held', 'Expected participants',
-    'Attended', 'Attendance source', 'Budget', 'Report', 'Attachments',
+    'Attended', 'Internal students', 'External students', 'Internal faculty',
+    'External faculty', 'Attendance source', 'Budget', 'Report', 'Attachments',
     'Report link',
 ], $indexRows));
 
@@ -230,6 +241,10 @@ $analysisRows = [
     ['Events held', $t['events_held']],
     ['Events cancelled', $t['events_cancelled']],
     ['Participants attended', $t['attended']],
+    ['  Internal students', $data['groups']['att_internal_students']],
+    ['  External students', $data['groups']['att_external_students']],
+    ['  Internal faculty', $data['groups']['att_internal_faculty']],
+    ['  External faculty', $data['groups']['att_external_faculty']],
     ['Participants expected', $t['expected']],
     ['Attendance vs expected (%)', $t['attendance_percent']],
     ['Budget', number_format($t['budget'], 2, '.', '')],
@@ -295,7 +310,7 @@ foreach ($data['events'] as $e) {
         continue;
     }
 
-    // Photographs and documents only - see the note at the top about videos.
+    // Photographs, bills and attendance proof. Legacy videos stay on the server.
     $stmt = $conn->prepare(
         "SELECT kind, original_name, stored_path FROM proposal_media
           WHERE proposal_id = ? AND kind IN ('photo','document') ORDER BY kind, id"

@@ -5,8 +5,8 @@
  * Creates three proposals for one convener, positioned in time so that each
  * report control is visible somewhere:
  *
- *   ended 2 days ago    Create Event Report - attach photographs, videos and
- *                       documents, preview, then generate the final PDF
+ *   ended 2 days ago    Create Event Report - write the summary, record who
+ *                       attended, attach photographs and bills, then generate
  *   starts in 2 days    Print Draft - the pre-event copy for the HOD, and the
  *                       proposal the "2 days before" reminder picks up
  *   ended 9 days ago    inside the "report overdue" reminder window
@@ -136,7 +136,8 @@ $demos = [
         'description' => 'A three-day hands-on workshop covering applied machine learning for engineering '
             . 'problems, delivered with industry speakers and a closing project showcase. '
             . 'This proposal is seeded with its dates in the past, so the post-event report '
-            . 'workspace is open: attach photographs, videos and documents, preview the PDF, '
+            . 'workspace is open: write the summary, record attendance, attach photographs '
+            . 'and bills, preview the PDF, '
             . 'then generate the final report.',
         'category'    => 'workshop',
         'start'       => '-5 days',
@@ -414,7 +415,9 @@ foreach ($history as $i => [$title, $category, $endAgo, $length, $pax, $attended
         'start'        => $start,
         'end'          => $end,
         'pax'          => $pax,
-        'attended'     => $attended,
+        // Attendance is recorded when the report is generated, so an event
+        // with no report has none.
+        'attended'     => $filed ? $attended : null,
         'audience'     => 'Students,Faculty',
         'student_cat'  => null,
         'status'       => $status,
@@ -435,11 +438,29 @@ foreach ($history as $i => [$title, $category, $endAgo, $length, $pax, $attended
     $relative = 'reports/Report_' . str_replace('-', '_', $ref) . '_' . strtotime($end) . '.pdf';
     demo_report_pdf(__DIR__ . '/../' . $relative, $ref, $title, $endDate, (int) ($attended ?? $pax));
 
+    // A plausible split of the turnout across the four groups the report counts.
+    $total    = (int) ($attended ?? $pax);
+    $intStud  = (int) round($total * 0.70);
+    $extStud  = (int) round($total * 0.15);
+    $intFac   = (int) round($total * 0.10);
+    $extFac   = max(0, $total - $intStud - $extStud - $intFac);
+
+    $summary = "The {$title} was conducted by the Department of " . $convener['department'] . " and ran to plan. "
+        . "Sessions covered the announced scope, with participants working through guided exercises alongside the "
+        . "invited speakers. Attendance held steady across the schedule and the feedback collected at the close was "
+        . "positive, with several participants asking for a follow-up in the next semester. Bills, the attendance "
+        . "sheet and photographs of the sessions are attached with this report. This summary is seeded demo text.";
+
     $stmt = $conn->prepare(
-        'UPDATE proposals SET report_path = ?, report_generated_at = ? WHERE id = ?'
+        'UPDATE proposals
+            SET report_path = ?, report_generated_at = ?, report_summary = ?,
+                actual_participants = ?, att_internal_students = ?, att_external_students = ?,
+                att_internal_faculty = ?, att_external_faculty = ?
+          WHERE id = ?'
     );
     $generated = date('Y-m-d H:i:s', strtotime($end . ' +2 days'));
-    $stmt->bind_param('ssi', $relative, $generated, $id);
+    $stmt->bind_param('sssiiiiii', $relative, $generated, $summary,
+        $total, $intStud, $extStud, $intFac, $extFac, $id);
     $stmt->execute();
     $stmt->close();
     $filedCount++;
@@ -470,6 +491,5 @@ printf("  %-28s %-12s %s\n", DEMO_CONVENER, $password, 'convener dashboard - rep
 printf("  %-28s %-12s %s\n", DEMO_HOD, $password, 'HOD dashboard - can open the filed report');
 
 echo "\nSample files to attach: demo_assets/\n";
-echo "  inauguration.jpg, keynote_session.jpg, valedictory.jpg   photographs\n";
-echo "  keynote_clip.mp4                                         video (annexure + QR)\n";
-echo "  attendance_sheet.pdf, expense_bills.pdf                  documents (annexure + QR)\n";
+echo "  inauguration.jpg, keynote_session.jpg, valedictory.jpg   photographs (2 per event day)\n";
+echo "  attendance_sheet.pdf, expense_bills.pdf                  bills and attendance proof\n";

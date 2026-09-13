@@ -56,6 +56,27 @@ $ec_period_list = ec_periods();
         </div>
     </div>
 
+    <!-- Who attended -->
+    <div id="attendanceBreakdown"
+        class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6 text-center text-xs text-gray-600 dark:text-gray-300">
+        <div class="rounded-lg border border-gray-100 dark:border-gray-700 py-2">
+            <span class="block text-[10px] uppercase tracking-wider text-gray-400">Internal students</span>
+            <span id="groupIntStudents" class="block text-base font-bold text-gray-800 dark:text-gray-100">—</span>
+        </div>
+        <div class="rounded-lg border border-gray-100 dark:border-gray-700 py-2">
+            <span class="block text-[10px] uppercase tracking-wider text-gray-400">External students</span>
+            <span id="groupExtStudents" class="block text-base font-bold text-gray-800 dark:text-gray-100">—</span>
+        </div>
+        <div class="rounded-lg border border-gray-100 dark:border-gray-700 py-2">
+            <span class="block text-[10px] uppercase tracking-wider text-gray-400">Internal faculty</span>
+            <span id="groupIntFaculty" class="block text-base font-bold text-gray-800 dark:text-gray-100">—</span>
+        </div>
+        <div class="rounded-lg border border-gray-100 dark:border-gray-700 py-2">
+            <span class="block text-[10px] uppercase tracking-wider text-gray-400">External faculty</span>
+            <span id="groupExtFaculty" class="block text-base font-bold text-gray-800 dark:text-gray-100">—</span>
+        </div>
+    </div>
+
     <!-- Charts -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div class="rounded-xl border border-gray-100 dark:border-gray-700 p-4">
@@ -95,12 +116,11 @@ $ec_period_list = ec_periods();
             <h3 class="text-sm font-bold text-gray-700 dark:text-gray-200">Download the reports for this period</h3>
             <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
                 A ZIP of every filed report PDF, with <code>index.csv</code>, <code>analysis.csv</code> and a summary.
-                Videos stay on the server and are linked from the index.
             </p>
             <label class="inline-flex items-center gap-2 mt-2 text-[11px] text-gray-600 dark:text-gray-300 cursor-pointer">
                 <input type="checkbox" id="archiveIncludeMedia"
                     class="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500">
-                Include photographs and documents (larger file)
+                Include photographs, bills and attendance proof (larger file)
             </label>
         </div>
         <button type="button" id="archiveDownloadBtn"
@@ -233,6 +253,14 @@ $ec_period_list = ec_periods();
                 document.getElementById('statReports').innerText = t.reports_filed + ' / ' + t.events_held;
                 document.getElementById('statReportsSub').innerText =
                     t.reports_pending > 0 ? t.reports_pending + ' still outstanding' : 'all filed';
+
+                // Only counted from reports that recorded a breakdown, so these
+                // add up to less than the headline where older reports exist.
+                const g = data.groups || {};
+                document.getElementById('groupIntStudents').innerText = num(g.att_internal_students);
+                document.getElementById('groupExtStudents').innerText = num(g.att_external_students);
+                document.getElementById('groupIntFaculty').innerText = num(g.att_internal_faculty);
+                document.getElementById('groupExtFaculty').innerText = num(g.att_external_faculty);
 
                 renderFaculty(data.faculty || []);
                 renderCharts(data);

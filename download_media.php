@@ -8,7 +8,8 @@
  * an HOD/coordinator in the same department.
  *
  * The report's annexure prints a link and a QR code pointing here for every
- * video and document, so these URLs are opened long after the report is made -
+ * document it cannot carry, so these URLs are opened long after the report is
+ * made -
  * from a phone, by someone who must still be signed in.
  */
 
@@ -77,7 +78,7 @@ if ($mediaRoot === false || $absolute === false
 $size = filesize($absolute);
 $mime = $row['mime_type'] ?: 'application/octet-stream';
 
-// Photographs, videos, PDFs and text open in the browser; anything else is a
+// Photographs, PDFs and text open in the browser; anything else is a
 // download, since the browser would only offer to save it anyway.
 $inline = ($row['kind'] === 'photo' || $row['kind'] === 'video'
     || $mime === 'application/pdf' || str_starts_with($mime, 'text/'));
@@ -90,7 +91,7 @@ header('X-Content-Type-Options: nosniff');
 header('Cache-Control: private, no-store');
 header('Accept-Ranges: bytes');
 
-// Byte ranges, so a video can be scrubbed instead of downloaded whole.
+// Byte ranges: large attachments resume, and any legacy video still seeks.
 $start = 0;
 $end   = $size - 1;
 if (!empty($_SERVER['HTTP_RANGE']) && preg_match('/bytes=(\d*)-(\d*)/', $_SERVER['HTTP_RANGE'], $m)) {
