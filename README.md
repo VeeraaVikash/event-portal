@@ -194,7 +194,7 @@ Three roles, resolved from `users.role` and stored in `$_SESSION['role']`:
 
 | Role | Dashboard | Can do |
 |---|---|---|
-| Convener (`faculty` / `Convener`) | `dashboard.php` | create, edit and resubmit own proposals; cancel; reschedule an approved event; print a pre-event draft; attach photographs, videos and documents and generate the post-event report; chat while under review |
+| Convener (`faculty` / `Convener`) | `dashboard.php` | create, edit and resubmit own proposals; cancel; reschedule an approved event; print a pre-event draft; write the post-event summary, record attendance, attach photographs and bills, and generate the report; chat while under review |
 | HOD (`hod`) | `dashboard_hod.php` | approve, reject or request changes on proposals **from their own department**; chat while under review; department analysis and report archive |
 | Coordinator (`coordinator`) | `dashboard_coordinator.php` | read-only monitoring of their department, CSV export, pre-approved event import; department analysis and report archive |
 
@@ -254,30 +254,48 @@ draft button — there is nothing settled to circulate yet.
 Once the end date has passed on an approved event, the convener sees **Create
 Event Report**, which opens the report workspace:
 
-| Attachment | Accepted | Per-file limit | Where it ends up |
-|---|---|---|---|
-| Photographs | JPG, PNG, WebP, GIF | 10 MB | printed as full pages inside the PDF |
-| Videos | MP4, WebM, MOV, M4V | 100 MB | stored; linked from the annexure |
-| Documents & bills | PDF, Word, Excel, PowerPoint, TXT, CSV | 25 MB | stored; linked from the annexure |
+The convener writes three things and attaches two:
 
-The workspace also asks how many participants actually attended. It is optional
-- leave it blank if no headcount was taken - and it is printed in the report
-beside the expected figure and used by the department analysis. Events reported
-before the field existed fall back to the expected count rather than counting as
-zero.
+| | |
+|---|---|
+| Summary of what happened | required, at least 50 words, printed at the top of the report before any table |
+| Who attended | internal students, external students, internal faculty, external faculty - totalled automatically |
+| Attachments | photographs, and the bills and attendance proof |
+
+| Attachment | Accepted | Per-file limit | How many | Where it ends up |
+|---|---|---|---|---|
+| Photographs | JPG, PNG, WebP, GIF | 10 MB | **2 per day of the event** - a 5-day event may carry 10 | printed as full pages inside the PDF |
+| Bills & attendance proof | PDF, Word, Excel, PowerPoint, TXT, CSV | 25 MB | no limit | stored; linked from the annexure |
+
+The photograph allowance is stated in the workspace ("Up to 10 for this event -
+2 per day over 5 days. 3 attached so far."), enforced by the upload endpoint,
+and printed in the report itself. A batch that crosses the cap stores what fits
+and names the files it did not.
+
+**Video is not accepted.** It was for a short window; a PDF cannot play one, and
+what the report is actually for is bills and attendance proof. Rows uploaded in
+that window still serve and still appear in the annexure.
+
+Attendance is recorded as four figures rather than one headcount, because "how
+many came" is really four questions: internal students, external students,
+internal faculty, external faculty. The total is computed and printed beside the
+expected count, the breakdown gets its own table in the report, and the
+department analysis reports on both. Leave all four blank if no headcount was
+taken - the analysis then falls back to the expected figure rather than counting
+the event as zero, and says how many of its figures are real.
 
 Files upload as soon as they are chosen, so a report can be assembled over
-several sittings, and a 100 MB video is only ever sent once. **Preview & Print**
+several sittings, and a large scan is only ever sent once. **Preview & Print**
 builds the current state of the report without saving anything. **Generate &
 Save Final Report** builds it and stores it against the proposal.
 
-The report contains everything entered in the proposal — the convener's name,
-designation and contact, dates, participants, chief guests, travel, budget and
-funding — plus the photographs, plus an
-**annexure** listing every video and document with its size, a link, and a QR
-code. A PDF cannot play a video and the browser generator cannot merge foreign
-documents, so the annexure is how they travel with the report: scanning the code
-opens `download_media.php`, which requires a session.
+The report opens with the summary of what happened, then everything entered in
+the proposal - the convener's name, designation and contact, dates, participants,
+chief guests, travel, budget and funding - the attendance breakdown, the
+photographs as full pages, and an **annexure** listing every document with its
+size, a link and a QR code. The browser generator cannot merge foreign documents
+into the PDF, so the annexure is how bills and attendance proof travel with it:
+scanning the code opens `download_media.php`, which requires a session.
 
 **Generation is one-shot.** Once the final report exists, attachments are frozen
 and a second generation is refused (409). This is what the workspace promises on
@@ -305,13 +323,16 @@ The web server user needs write access to `uploads/` as well as `reports/`.
 ### php.ini
 
 The application's own limits are above PHP's defaults, and PHP enforces its
-limits first. Without this a convener uploading a video gets PHP's error rather
-than the application's:
+limits first. Without this a convener attaching several photographs at once
+gets PHP's error rather than the application's:
 
 ```ini
-upload_max_filesize = 100M
-post_max_size       = 110M
+upload_max_filesize = 25M
+post_max_size       = 60M
 ```
+
+`post_max_size` covers a whole batch, not one file, so it needs room for several
+photographs sent together.
 
 A request larger than `post_max_size` arrives with everything stripped, which
 the upload endpoint detects and reports as **413** with an explanation.
@@ -342,6 +363,7 @@ list and the status counts but are kept out of the totals.
 |---|---|
 | Events held | approved events whose end date falls in the period |
 | Participants attended | recorded attendance, falling back to the expected count where none was entered, with the percentage against expected |
+| Who attended | internal and external students, internal and external faculty, counted only from reports that recorded a breakdown |
 | Budget | sum of the proposed budget lines for those events |
 | Reports filed | how many of them have a generated report, and how many are outstanding |
 
@@ -358,15 +380,16 @@ The **Download ZIP** button hands the selected period to
 eventconnect-reports_Computing-Technologies_2025-09-13_to_2026-09-13.zip
 ├── SUMMARY.txt     headline figures, by faculty, by category
 ├── index.csv       one row per event: ref, title, convener, dates, status,
-│                   expected, attended, budget, report filed, report link
+│                   expected, attended, the four attendance groups, budget,
+│                   report filed, report link
 ├── analysis.csv    the same figures laid out for a spreadsheet
 └── reports/        PRO-0011_2026-08-24_Workshop-on-Cloud-Native.pdf, ...
 ```
 
-Ticking **include photographs and documents** adds an `attachments/` folder per
-event. **Videos are never included** - one event can carry 100 MB of them, and a
-year's worth would be unusable as a download - so `index.csv` carries the link
-that serves each one instead.
+Ticking **include photographs, bills and attendance proof** adds an
+`attachments/` folder per event. `index.csv` carries a link for everything,
+including legacy video rows, which are never bundled - a year's worth would be
+unusable as a download.
 
 The archive stops at 512 MB. Anything left out is listed in a `NOTES.txt` inside
 the ZIP, along with any report the database references but that is missing from
@@ -686,6 +709,14 @@ the department analysis reports on. One nullable column; same rules.
 
 ```bash
 php migrations/2026_09_13_actual_participants.php
+```
+
+`migrations/2026_09_13_attendance_breakdown.php` splits that figure into the
+four groups the report now records and adds `proposals.report_summary`. Five
+nullable columns; `actual_participants` stays as their total.
+
+```bash
+php migrations/2026_09_13_attendance_breakdown.php
 ```
 
 **Compatibility.** Purely additive and idempotent. Nothing is renamed, dropped

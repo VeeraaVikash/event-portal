@@ -774,9 +774,10 @@ require 'partials/nav.php';
     //          attachment is listed in an annexure, and the finished PDF is
     //          stored on the server as the official report.
     //
-    // A PDF cannot play a video and this generator cannot merge foreign
-    // documents, so bills and attendance proof stay on the server: the annexure
-    // carries a QR code and a link to download_media.php for each one.
+    // This generator cannot merge foreign documents into the PDF, so bills and
+    // attendance proof stay on the server and the annexure carries a QR code
+    // and a link to download_media.php for each one. Photographs are capped at
+    // two per day of the event, which the server enforces.
 
     const reportState = { media: [], busy: false };
 
